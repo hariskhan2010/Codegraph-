@@ -10,6 +10,7 @@ so the ``/codegraph`` agent skill and existing configs carry over.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -232,19 +233,21 @@ def cmd_merge(args) -> int:
 
 
 def cmd_install_skill(args) -> int:
+    """Claude Code shortcut — just the /codegraph skill, user scope."""
     import shutil
     from importlib import resources
 
-    dest_dir = Path(args.dir).expanduser() if args.dir else \
-        Path.home() / ".claude" / "skills" / "codegraph"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    src = resources.files("codegraph.skill") / "SKILL.md"
-    dest = dest_dir / "SKILL.md"
-    if dest.exists() and not args.force:
-        sys.exit(f"{dest} already exists — pass --force to overwrite")
-    shutil.copyfile(str(src), dest)
-    print(f"installed the /codegraph skill -> {dest}")
-    print("restart Claude Code (or your agent) to pick it up")
+    if args.dir:
+        dest = Path(args.dir).expanduser() / "SKILL.md"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(str(resources.files("codegraph.skill") / "SKILL.md"), dest)
+        print(f"installed the /codegraph skill -> {dest}")
+        return 0
+    from .installers import install as _inst
+
+    for rec in _inst("claude", Path("."), scope="user", do_mcp=False):
+        print(f"  {rec['what']}: {rec['path']}")
+    print("restart Claude Code to pick it up")
     return 0
 
 
@@ -447,27 +450,80 @@ def cmd_clone(args) -> int:
     return 0
 
 
-def cmd_install(args) -> int:
-    import sys as _sys
+def _pick_agents_interactively():
+    from .installers import MENU, _GLM_KIMI_NOTE, detected
 
-    from .installers import install as install_mcp
-
-    target = Path(args.path).resolve()
-    if not args.git_only:
+    print("\nWhich AI agent(s) do you use?  (numbers, comma/space separated, or 'all')\n")
+    for i, a in enumerate(MENU, 1):
+        mark = "  [detected]" if detected(a.key) else ""
+        print(f"  {i:2}. {a.label}{mark}")
+    print(f"\n  {_GLM_KIMI_NOTE}\n")
+    while True:
+        raw = input("> ").strip().lower()
+        if not raw:
+            return []
+        if raw in ("all", "a", "*"):
+            return list(MENU)
         try:
-            r = install_mcp(args.platform, target)
+            idx = {int(x) for x in re.split(r"[\s,]+", raw) if x}
+        except ValueError:
+            print("  numbers only, e.g.  1,4,7")
+            continue
+        chosen = [a for n, a in enumerate(MENU, 1) if n in idx]
+        if chosen:
+            return chosen
+        print("  nothing matched — try again")
+
+
+def cmd_install(args) -> int:
+    from .installers import AGENTS, MENU, install as agent_install
+
+    # ---- resolve which agents + scope --------------------------------------
+    keys = list(args.agent or [])
+    if "all" in keys:
+        keys = [a.key for a in MENU]
+    scope = args.scope
+    root = Path(args.path).resolve()
+
+    if not keys and not args.git_only:
+        if not sys.stdin.isatty():
+            sys.exit("codegraph install: pass --agent NAME (repeatable) or run "
+                     "in a terminal for the interactive picker")
+        chosen = _pick_agents_interactively()
+        if not chosen:
+            print("nothing selected")
+            return 0
+        keys = [a.key for a in chosen]
+        if not scope:
+            ans = input("\nScope?  [global] / project : ").strip().lower()
+            scope = "project" if ans.startswith("p") else "global"
+    scope = scope or "global"
+
+    # ---- do it -----------------------------------------------------------
+    for key in keys:
+        agent = AGENTS[key]
+        print(f"\n{agent.label}:")
+        try:
+            recs = agent_install(key, root, scope=scope)
         except ValueError as e:
-            sys.exit(str(e))
-        print(f"wrote {r['path']}  ({r['platform']}, {r['scope']} scope)")
-        if r["platform"] == "claude":
-            print("Claude Code picks this up on next start (or: "
-                  f"claude mcp add codegraph -- {_sys.executable} "
-                  f"-m codegraph serve {target})")
+            print(f"  {e}")
+            continue
+        if agent.manual:
+            print(f"  (manual) {agent.manual}")
+            continue
+        for rec in recs:
+            note = f"   ({rec['note']})" if rec.get("note") else ""
+            print(f"  {rec['what']:12} {rec['path']}{note}")
+        if not recs:
+            print("  (nothing to write for this scope)")
+        else:
+            print(f"  -> restart {agent.label} to pick it up")
 
     if args.git or args.git_only:
         from .gitmerge import install as install_merge_driver
 
-        for note in install_merge_driver(target):
+        print("\ngit merge driver:")
+        for note in install_merge_driver(root):
             print(f"  {note}")
     return 0
 
@@ -705,12 +761,19 @@ def build_parser() -> argparse.ArgumentParser:
     cl.add_argument("dest", help="destination project root")
     cl.set_defaults(func=cmd_clone)
 
-    from .installers import PLATFORMS as _PLATFORMS
+    from .installers import AGENTS as _AGENTS
 
-    ins = with_path(sub.add_parser("install", help="register the MCP server with an "
-                                   "agent platform (+ optional git merge driver)"))
-    ins.add_argument("--platform", default="claude", choices=sorted(_PLATFORMS),
-                     help="target agent (default: claude)")
+    _agent_choices = [a.key for a in _AGENTS.values()] + ["all"]
+    ins = with_path(sub.add_parser("install", help="wire codegraph into your AI "
+                                   "agent(s) — MCP + instructions (interactive)"))
+    ins.add_argument("--agent", "--platform", action="append", metavar="NAME",
+                     choices=_agent_choices, dest="agent",
+                     help="target agent (repeatable): "
+                          + ", ".join(a.key for a in _AGENTS.values() if a.in_menu())
+                          + ". Omit for an interactive picker.")
+    ins.add_argument("--scope", choices=["global", "project"],
+                     help="global (each agent's user config) or project (this repo). "
+                          "Interactive default: asks; flag default: global")
     ins.add_argument("--git", action="store_true",
                      help="also install the codegraph-out/ git merge driver")
     ins.add_argument("--git-only", action="store_true",

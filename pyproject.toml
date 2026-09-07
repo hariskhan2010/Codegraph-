@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "code-graph"
-version = "0.5.0"
+version = "0.6.0"
 description = "Turn a codebase into a persistent, queryable graph (SQLite + tree-sitter). A behavior-compatible successor to the graphify skill. Import and CLI are `codegraph`."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -58,7 +58,7 @@ codegraph = "codegraph.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["codegraph"]
-artifacts = ["codegraph/skill/SKILL.md"]
+artifacts = ["codegraph/skill/SKILL.md", "codegraph/skill/AGENTS_SNIPPET.md"]
 
 [tool.hatch.build.targets.sdist]
 include = ["codegraph", "tests", "PLAN.md", "CHANGELOG.md", "LICENSE", "README.md"]

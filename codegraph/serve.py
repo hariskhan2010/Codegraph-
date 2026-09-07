@@ -112,8 +112,13 @@ _TOOLS = [
 ]
 
 
-def _dispatch(db: Db, name: str, args: dict) -> str:
+def _dispatch(db: Db | None, name: str, args: dict, project: str = ".") -> str:
     from . import analyze, query
+
+    if db is None:
+        return (f"No codegraph graph for this project yet.\n"
+                f"Build it:  codegraph extract {project}\n"
+                f"Then this tool works.")
 
     if name == "query_graph":
         return query.query(db, args["question"],
@@ -152,13 +157,24 @@ def _dispatch(db: Db, name: str, args: dict) -> str:
 def _resolve_db(path: Path) -> Path:
     if path.is_file() and path.suffix == ".db":
         return path
-    p = db_path(path)
+    return db_path(path)
+
+
+def _open_db(path: Path) -> tuple[Db | None, str]:
+    """Open the graph DB for ``path`` if one exists — otherwise ``(None, path)``
+    so the server still starts and every tool returns a 'run extract' message.
+    A global MCP entry must be safe in a project that has no graph yet."""
+    p = _resolve_db(Path(path))
+    proj = str(p.parent.parent if p.name.endswith(".db") else path)
     if not p.exists():
-        raise SystemExit(f"no graph at {p} — run `codegraph extract {path}` first")
-    return p
+        return None, proj
+    try:
+        return Db(p, create=False), proj
+    except Exception:
+        return None, proj
 
 
-def handle(db: Db, req: dict) -> dict | None:
+def handle(db: Db | None, req: dict, project: str = ".") -> dict | None:
     """One JSON-RPC request -> one response dict (or ``None`` for a notification)."""
     mid = req.get("id")
     method = req.get("method")
@@ -178,7 +194,7 @@ def handle(db: Db, req: dict) -> dict | None:
         tname = params.get("name", "")
         targs = params.get("arguments") or {}
         try:
-            text = _dispatch(db, tname, targs)
+            text = _dispatch(db, tname, targs, project)
             return {"jsonrpc": "2.0", "id": mid, "result": {
                 "content": [{"type": "text", "text": text}]}}
         except Exception as e:  # never crash the loop
@@ -192,7 +208,7 @@ def handle(db: Db, req: dict) -> dict | None:
 
 def serve(path: Path) -> None:
     """stdio transport (Claude Desktop, most MCP clients)."""
-    db = Db(_resolve_db(Path(path)), create=False)
+    db, proj = _open_db(Path(path))
     out = sys.stdout
     for line in sys.stdin:
         line = line.strip()
@@ -202,7 +218,7 @@ def serve(path: Path) -> None:
             req = json.loads(line)
         except json.JSONDecodeError:
             continue
-        resp = handle(db, req)
+        resp = handle(db, req, proj)
         if resp is not None:
             out.write(json.dumps(resp) + "\n")
             out.flush()
@@ -226,6 +242,7 @@ def serve_http(path: Path, *, host: str = "127.0.0.1", port: int = 8765) -> None
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     dbp = _resolve_db(Path(path))
+    proj = str(Path(path))
     sessions: set[str] = set()
     lock = threading.Lock()
 
@@ -321,11 +338,13 @@ def serve_http(path: Path, *, host: str = "127.0.0.1", port: int = 8765) -> None
                 with lock:
                     sessions.add(sid)
 
-            db = Db(dbp, create=False)
+            db = Db(dbp, create=False) if dbp.exists() else None
             try:
-                out = [r for r in (handle(db, one) for one in reqs) if r is not None]
+                out = [r for r in (handle(db, one, proj) for one in reqs)
+                       if r is not None]
             finally:
-                db.close()
+                if db is not None:
+                    db.close()
 
             if not out:
                 self.send_response(202)

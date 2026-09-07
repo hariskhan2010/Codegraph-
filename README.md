@@ -66,21 +66,42 @@ pip install "code-graph[embeddings]"   # numpy, for `codegraph embed`
 pip install -e ".[dev]"                # tests + build tooling
 ```
 
-Then set it up for your agent:
+### Wire it into your AI agent(s)
 
 ```bash
-codegraph install-skill                        # copies the /codegraph skill into ~/.claude/skills/
-codegraph install <path> [--platform NAME]     # registers the MCP server (claude/cursor/vscode/windsurf/zed)
+codegraph install          # interactive: pick your agents, pick global/project
 ```
+
+It shows a numbered list, you type e.g. `1,4,7` (or `all`), choose scope, and it
+writes each agent's **MCP config** *and* its **"use codegraph first" instructions**
+in that agent's own format:
+
+| Agent | MCP config | Instructions |
+|---|---|---|
+| Claude Code | `~/.claude.json` / `.mcp.json` | `~/.claude/skills/codegraph/SKILL.md` |
+| Claude Desktop | `claude_desktop_config.json` | — |
+| Cursor | `~/.cursor/mcp.json` | `AGENTS.md` |
+| VS Code (Copilot) | `.vscode/mcp.json` | `AGENTS.md` |
+| Zed | `settings.json` `context_servers` | `AGENTS.md` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | — |
+| Gemini CLI | `~/.gemini/settings.json` | `/codegraph` command + `GEMINI.md` |
+| Qwen Code | `~/.qwen/settings.json` | `/codegraph` command + `QWEN.md` |
+| Codex CLI | `~/.codex/config.toml` | `AGENTS.md` |
+| OpenCode | `opencode.json` `mcp` | `AGENTS.md` |
+| Continue | `.continue/mcpServers/` | `.continue/rules/` |
+
+Scriptable: `codegraph install --agent gemini --agent codex --scope global`.
+(GLM / Kimi as *models* run through one of these — pick that agent.)
+`codegraph install-skill` is the Claude-only shortcut.
 
 ### Sharing it with someone
 
-Send them `dist/code_graph-0.5.0-py3-none-any.whl` (build it with `python -m build`).
+Send them `dist/code_graph-0.6.0-py3-none-any.whl` (build it with `python -m build`).
 They run:
 
 ```bash
-pip install code_graph-0.5.0-py3-none-any.whl   # needs Python 3.11+
-codegraph install-skill
+pip install code_graph-0.6.0-py3-none-any.whl   # needs Python 3.11+
+codegraph install                                # pick their agents
 ```
 
 ### Publishing to PyPI

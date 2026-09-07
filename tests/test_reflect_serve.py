@@ -38,6 +38,19 @@ def test_reflect_preferred_and_dead_end(tmp_path):
     db.close()
 
 
+def test_serve_tolerates_missing_graph(tmp_path):
+    from codegraph.serve import _open_db, handle
+
+    db, proj = _open_db(tmp_path)          # no graph here
+    assert db is None
+    resp = handle(db, {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                       "params": {"name": "query_graph",
+                                  "arguments": {"question": "x"}}}, proj)
+    text = resp["result"]["content"][0]["text"]
+    assert "codegraph extract" in text
+    assert resp["result"].get("isError") is not True   # a message, not an error
+
+
 def test_serve_dispatch(tmp_path):
     db = _proj(tmp_path)
     out = _dispatch(db, "graph_stats", {})

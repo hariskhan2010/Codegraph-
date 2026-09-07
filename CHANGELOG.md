@@ -4,6 +4,24 @@ All notable changes to codegraph. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the package
 version in `pyproject.toml`.
 
+## 0.6.0 — 2026-09-08
+
+### Added — interactive multi-agent installer
+- `codegraph install` with no arguments prints a numbered agent picker
+  (Claude Code / Desktop, Cursor, VS Code, Zed, Windsurf, Gemini CLI, Qwen Code,
+  Codex CLI, OpenCode, Continue), asks global-vs-project, and writes each agent's
+  **MCP config in its own format** (`mcpServers` / `servers` / `context_servers`
+  map, Codex `config.toml`, OpenCode `mcp.local`, Continue standalone YAML) **and
+  its instructions** (Claude `SKILL.md`, Gemini/Qwen `/codegraph` slash-command +
+  `GEMINI.md`/`QWEN.md`, everyone else an `AGENTS.md` block between markers).
+- Scriptable: `--agent NAME` (repeatable) `--scope {global,project}`.
+- `AGENTS.md` writes are idempotent (replace between `<!-- codegraph:start/end -->`).
+- MCP entry uses the bare `codegraph` command and, at global scope, `serve` with
+  no path so it graphs whatever project the agent opens.
+- `codegraph serve` now starts even when the project has no graph yet — tools
+  return a "run `codegraph extract`" message instead of crashing.
+- Bundled `AGENTS_SNIPPET.md`; `--platform` kept as an alias of `--agent`.
+
 ## 0.5.0 — 2026-09-07
 
 Feature-complete against `PLAN.md`. 102 tests. Pip-installable
