@@ -5,7 +5,7 @@ codegraph keeps the same entry point with no heavy dependency: text and HTML are
 handled in-process (``urllib`` only); PDF / Office / audio delegate to a CLI
 (``pdftotext`` / ``pandoc`` / ``whisper``) *if it is on PATH*, else a clear error.
 
-The fetched text is written to ``graphify-out/sources/<slug>.md`` (regenerable,
+The fetched text is written to ``codegraph-out/sources/<slug>.md`` (regenerable,
 outside the walked tree) and indexed with the same heading -> ``section`` node
 extractor the document tier uses, so ``query`` reaches it immediately.
 """

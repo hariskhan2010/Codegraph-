@@ -12,12 +12,12 @@ def _git(root, *args):
 
 def test_merge_driver_keeps_ours_and_drops_sentinel(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    out = tmp_path / "graphify-out"
+    out = tmp_path / "codegraph-out"
     out.mkdir()
     ours = out / "graph.json"
     ours.write_text('{"ours": true}')
     rc = merge_driver("base.tmp", "ours.tmp", "theirs.tmp",
-                      "graphify-out/graph.json")
+                      "codegraph-out/graph.json")
     assert rc == 0
     assert ours.read_text() == '{"ours": true}'          # untouched
     assert (out / ".needs-rebuild").exists()
@@ -29,7 +29,7 @@ def test_install_configures_repo(tmp_path):
     notes = install(tmp_path)
     assert any("gitattributes" in n for n in notes)
     attrs = (tmp_path / ".gitattributes").read_text()
-    assert "graphify-out/** merge=codegraph" in attrs
+    assert "codegraph-out/** merge=codegraph" in attrs
     drv = _git(tmp_path, "config", "--get", "merge.codegraph.driver").stdout.strip()
     assert drv == "codegraph merge-driver %O %A %B %P"
 
@@ -47,7 +47,7 @@ def test_real_merge_conflict_resolves(tmp_path):
     _git(tmp_path, "config", "merge.codegraph.driver",
          f'"{sys.executable}" -m codegraph merge-driver %O %A %B %P')
 
-    out = tmp_path / "graphify-out"
+    out = tmp_path / "codegraph-out"
     out.mkdir()
     (out / "graph.json").write_text('{"v": 0}')
     (tmp_path / "src.py").write_text("x = 0\n")

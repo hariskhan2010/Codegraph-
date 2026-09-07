@@ -15,9 +15,9 @@ from .extract import extract_file
 
 
 def _backup_if_protected(db: Db, root: Path) -> str | None:
-    """Copy the current artifacts to ``graphify-out/<date>/`` before a rebuild
+    """Copy the current artifacts to ``codegraph-out/<date>/`` before a rebuild
     overwrites a graph that cost real LLM tokens (semantic rationale or
-    embeddings present). graphify's ``backup_if_protected``."""
+    embeddings present)."""
     import shutil
     from datetime import date
 

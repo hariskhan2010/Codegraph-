@@ -166,7 +166,7 @@ Roughly **5–8× fewer tokens** on that shape, plus far fewer round trips.
 
 ---
 
-## 2. Storage model (`graphify-out/codegraph.db`)
+## 2. Storage model (`codegraph-out/codegraph.db`)
 
 SQLite, WAL mode, one file. Schema (`schema_version` in `meta`):
 
@@ -375,7 +375,7 @@ is thin because the package orchestrates itself. It should be roughly:
 ```
 /codegraph <path-or-question>
 
-1. Is there a graphify-out/codegraph.db under <path>?
+1. Is there a codegraph-out/codegraph.db under <path>?
      no  → run `codegraph extract <path> --backend <detected>` ; report the summary
      yes → is it stale (git HEAD moved / files changed)?
               yes → `codegraph update <path>` (+ `extract` if semantic gaps)
@@ -499,7 +499,7 @@ From the deep-dive research — these are load-bearing, keep the behavior:
 - ✅ Exporters (`codegraph/export.py`, all pure DB serializers, no live service):
   `graphml`, `gexf`, `dot` (Graphviz→svg), `cypher` (Neo4j/FalkorDB/Memgraph
   import script), `csv`, `jsonl` (GraphRAG), `mermaid`, `obsidian` (Markdown vault),
-  `tree`. `export all` writes every one into `graphify-out/exports/`.
+  `tree`. `export all` writes every one into `codegraph-out/exports/`.
 - ✅ Document tier (`codegraph/extract/docs.py`) — Markdown / reST / AsciiDoc /
   setext headings → `section` nodes with `contains` nesting; on by default,
   `--no-docs` to skip. A design note is now reachable by `query` like a function.
@@ -526,12 +526,12 @@ From the deep-dive research — these are load-bearing, keep the behavior:
   channel with keep-alives; `DELETE` ends a session; `Mcp-Session-Id` minted on
   `initialize`. MCP 2025-03-26 shape.
 - ✅ **git merge-driver** (`codegraph/gitmerge.py`, `codegraph merge-driver`,
-  `install --git`) — `graphify-out/**` is regenerable: the driver keeps "ours",
+  `install --git`) — `codegraph-out/**` is regenerable: the driver keeps "ours",
   drops a `.needs-rebuild` sentinel, exits 0. Real 3-way-merge conflict test.
 - ✅ **`codegraph add <source>`** (`codegraph/ingest.py`) — URL (HTML→text) and
   arXiv (Atom API) in-process; PDF/Office/audio delegate to `pdftotext` /
   `pandoc` / `whisper` when present, clear error otherwise. Writes
-  `graphify-out/sources/<slug>.md`, indexes headings as `section` nodes, never
+  `codegraph-out/sources/<slug>.md`, indexes headings as `section` nodes, never
   pruned by `update`.
 - ✅ **Live graph-DB load** — `export cypher --run` pushes straight into Neo4j /
   FalkorDB / Memgraph via the `neo4j` driver or `cypher-shell`; the `.cypher`
@@ -558,7 +558,7 @@ From the deep-dive research — these are load-bearing, keep the behavior:
   `atomic_replace` (retry + copy-then-delete fallback for AV/editor-locked files);
   `long_path` (`\\?\` prefix past `MAX_PATH`, incl. UNC).
 - ✅ Backup-on-write — a graph with LLM rationale or embeddings is copied to
-  `graphify-out/<date>/` before a rebuild overwrites it (`_backup_if_protected`).
+  `codegraph-out/<date>/` before a rebuild overwrites it (`_backup_if_protected`).
 - ✅ Discrete INFERRED confidence — `{0.55, 0.65, 0.75, 0.85, 0.95}` ladder by
   signal strength in `resolve_calls`; `quantize_confidence()` snaps any
   extractor-supplied INFERRED score to a rung.
@@ -581,8 +581,10 @@ From the deep-dive research — these are load-bearing, keep the behavior:
 
 1. **Embeddings in core or Phase 2?** → **Phase 2.** FTS5 stemming + rapidfuzz vocab
    expansion already fixes the `authentication`/`login` miss; embeddings add a model dep.
-2. **Dir name?** → **`graphify-out/` kept**, with a `CODEGRAPH_OUT` override (relative
-   name or absolute path), exactly like `GRAPHIFY_OUT`. DB is `graphify-out/codegraph.db`.
+2. **Dir name?** → originally `graphify-out/` for drop-in compat; **changed to
+   `codegraph-out/` in v0.5.0** (personal tool, compat not needed). `CODEGRAPH_OUT`
+   override (bare name or absolute path); an existing `graphify-out/codegraph.db`
+   is still reused automatically. DB is `codegraph-out/codegraph.db`.
 3. **Console-script name?** → **`codegraph` only.** The `/codegraph` skill is the
    compatibility layer.
 4. **SCIP tier?** → Phase 2; detect indexers on PATH, fall back to tree-sitter, note the

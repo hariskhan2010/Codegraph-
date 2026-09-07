@@ -1,15 +1,15 @@
-"""git merge driver for ``graphify-out/`` artifacts.
+"""git merge driver for the ``codegraph-out/`` artifacts.
 
 The database is the source of truth; ``graph.json`` / ``GRAPH_REPORT.md`` /
 ``graph.html`` / ``codegraph.db`` are regenerable. When two branches each rebuilt
 the graph, a textual 3-way merge of these files is meaningless. This driver keeps
-the local ("ours") version, drops a ``graphify-out/.needs-rebuild`` sentinel, and
-exits 0 so the merge completes — then ``codegraph update`` (or the ``/codegraph``
-skill's freshness check) regenerates everything cleanly.
+the local ("ours") version, drops a ``.needs-rebuild`` sentinel, and exits 0 so
+the merge completes — then ``codegraph update`` (or the ``/codegraph`` skill's
+freshness check) regenerates everything cleanly.
 
 Registered by ``codegraph install --git``:
 
-  .gitattributes:  graphify-out/** merge=codegraph
+  .gitattributes:  codegraph-out/** merge=codegraph
   git config       merge.codegraph.driver "codegraph merge-driver %O %A %B %P"
 """
 
@@ -17,8 +17,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .config import OUT_NAME
+
 DRIVER_NAME = "codegraph"
-_ATTR_LINE = "graphify-out/** merge=codegraph -text\n"
+_OUT_DIRS = (OUT_NAME, "graphify-out", "codegraph-out")
+_ATTR_LINE = f"{OUT_NAME}/** merge=codegraph -text\n"
 
 
 def merge_driver(base: str, ours: str, theirs: str, path: str) -> int:
@@ -27,17 +30,17 @@ def merge_driver(base: str, ours: str, theirs: str, path: str) -> int:
     git passes ``%A`` as a *temp file* pre-filled with our version and copies it
     back into the worktree afterwards — so leaving it untouched and returning 0
     resolves the conflict in favour of ours. ``%P`` is the in-repo pathname and
-    the CWD is the repo root, which is how we locate ``graphify-out/``.
+    the CWD is the repo root, which is how we locate the output dir.
     """
     marker_dir: Path | None = None
     if path:
         parts = Path(path).parts
-        for name in ("graphify-out", "codegraph-out"):
+        for name in _OUT_DIRS:
             if name in parts:
                 marker_dir = Path(*parts[: parts.index(name) + 1])
                 break
     if marker_dir is None:
-        marker_dir = Path("graphify-out")
+        marker_dir = Path(OUT_NAME)
     try:
         marker_dir.mkdir(parents=True, exist_ok=True)
         (marker_dir / ".needs-rebuild").write_text(
@@ -56,7 +59,7 @@ def install(root: Path) -> list[str]:
     notes: list[str] = []
     gitattr = root / ".gitattributes"
     existing = gitattr.read_text(encoding="utf-8") if gitattr.exists() else ""
-    if "graphify-out/** merge=codegraph" not in existing:
+    if f"{OUT_NAME}/** merge=codegraph" not in existing:
         with gitattr.open("a", encoding="utf-8") as fh:
             if existing and not existing.endswith("\n"):
                 fh.write("\n")

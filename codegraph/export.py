@@ -4,7 +4,7 @@ graphify ships ~10 exporters and 6 graph-DB integrations; codegraph keeps the
 formats that are a deterministic serialization of the graph (no live database
 connection, no network) and leaves the hosted-service loaders to Phase 3 plugins.
 
-``codegraph export <target> <path>`` writes into ``graphify-out/exports/``:
+``codegraph export <target> <path>`` writes into ``codegraph-out/exports/``:
 
   graphml  gexf     — Gephi / yEd / NetworkX
   dot                — Graphviz (``dot -Tsvg``)

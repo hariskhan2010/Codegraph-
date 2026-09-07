@@ -620,7 +620,7 @@ def build_parser() -> argparse.ArgumentParser:
     ins.add_argument("--platform", default="claude", choices=sorted(_PLATFORMS),
                      help="target agent (default: claude)")
     ins.add_argument("--git", action="store_true",
-                     help="also install the graphify-out/ git merge driver")
+                     help="also install the codegraph-out/ git merge driver")
     ins.add_argument("--git-only", action="store_true",
                      help="only install the git merge driver")
     ins.set_defaults(func=cmd_install)

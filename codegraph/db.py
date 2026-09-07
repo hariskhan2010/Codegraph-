@@ -1,6 +1,6 @@
 """SQLite store — the authoritative graph state.
 
-Everything lives in one file (``graphify-out/codegraph.db``, WAL mode).
+Everything lives in one file (``codegraph-out/codegraph.db``, WAL mode).
 ``graph.json`` / ``GRAPH_REPORT.md`` / ``graph.html`` are rendered *outputs*
 re-emitted from this database, never a second source of truth.
 

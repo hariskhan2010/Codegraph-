@@ -1,8 +1,9 @@
 """Paths and environment configuration.
 
-Mirrors graphify's ``GRAPHIFY_OUT`` contract: the output directory name is
-``graphify-out`` by default (so existing agent configs and the graphify HTML
-viewer keep working) and is overridable with ``CODEGRAPH_OUT``.
+The output directory is ``codegraph-out`` by default and is overridable with the
+``CODEGRAPH_OUT`` environment variable (a bare name, or an absolute path). For
+backward compatibility, if no ``codegraph-out`` exists yet but a legacy
+``graphify-out/codegraph.db`` does, that directory is reused.
 """
 
 from __future__ import annotations
@@ -11,8 +12,8 @@ import os
 import unicodedata
 from pathlib import Path
 
-# Default kept as "graphify-out" for drop-in compatibility. Override with CODEGRAPH_OUT.
-OUT_NAME = os.environ.get("CODEGRAPH_OUT", "graphify-out")
+OUT_NAME = os.environ.get("CODEGRAPH_OUT", "codegraph-out")
+_LEGACY_OUT_NAME = "graphify-out"
 
 DB_NAME = "codegraph.db"
 GRAPH_JSON_NAME = "graph.json"
@@ -21,15 +22,22 @@ HTML_NAME = "graph.html"
 
 
 def out_dir(root: Path | str) -> Path:
-    """The ``graphify-out`` directory for a project root.
+    """The codegraph output directory for a project root.
 
-    If ``CODEGRAPH_OUT`` is an absolute path it is used verbatim; otherwise it is
-    resolved relative to ``root``.
+    If ``CODEGRAPH_OUT`` is an absolute path it is used verbatim. Otherwise it is
+    resolved relative to ``root`` — preferring an existing legacy ``graphify-out``
+    graph when the user has not opted into a custom name.
     """
     p = Path(OUT_NAME)
     if p.is_absolute():
         return p
-    return Path(root) / OUT_NAME
+    root = Path(root)
+    if "CODEGRAPH_OUT" not in os.environ:
+        new = root / OUT_NAME
+        legacy = root / _LEGACY_OUT_NAME
+        if not new.exists() and (legacy / DB_NAME).exists():
+            return legacy
+    return root / OUT_NAME
 
 
 def db_path(root: Path | str) -> Path:

@@ -64,6 +64,7 @@ codegraph diagnose path/to/project
 codegraph export all path/to/project            # graphml, cypher, obsidian, …
 ```
 
-Outputs land in `path/to/project/graphify-out/` (`codegraph.db`, `graph.json`,
-`GRAPH_REPORT.md`, `graph.html`, `exports/`). Override the directory name with
-`CODEGRAPH_OUT`.
+Outputs land in `path/to/project/codegraph-out/` (`codegraph.db`, `graph.json`,
+`GRAPH_REPORT.md`, `graph.html`, `exports/`). Override the directory name or
+give an absolute path with `CODEGRAPH_OUT`. An existing `graphify-out/` graph
+(from the old graphify skill) is reused automatically.
