@@ -48,9 +48,27 @@ dashboard.
 
 ## Install
 
+```bash
+# from a clone
+pip install .
+
+# from GitHub
+pip install "git+https://github.com/<you>/codegraph"
+
+# from a built wheel (python -m build → dist/)
+pip install dist/codegraph-*.whl
 ```
-pip install -e ".[all,dev]"      # or: .[langs] for just the pinned-grammar core
+
+That's it — all 20 languages work out of the box (grammars come from
+`tree-sitter-language-pack`). Optional extras:
+
+```bash
+pip install "codegraph[langs]"        # pinned grammars for the core 10 (slightly faster)
+pip install "codegraph[embeddings]"   # numpy, for `codegraph embed`
+pip install -e ".[dev]"               # tests + build tooling
 ```
+
+Then wire it into Claude Code / Cursor / … : `codegraph install <path> [--platform NAME]`.
 
 ## Use
 

@@ -18,13 +18,18 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Libraries",
 ]
+# `pip install codegraph` gives a working tool for all 20 languages out of the
+# box. tree-sitter-language-pack bundles every Phase-2+ grammar; the 10 pinned
+# grammars are preferred when present but the pack covers them too.
 dependencies = [
     "tree-sitter>=0.23",
     "networkx>=3.2",
     "rapidfuzz>=3.0",
+    "tree-sitter-language-pack>=1.0",
 ]
 
 [project.optional-dependencies]
+# pinned grammars — slightly faster/more stable than the pack for the core 10
 langs = [
     "tree-sitter-python",
     "tree-sitter-javascript",
@@ -37,17 +42,10 @@ langs = [
     "tree-sitter-c-sharp",
     "tree-sitter-rust",
 ]
-# Phase 2 languages (Kotlin, Swift, PHP, Scala, Lua, Bash, …) resolve their
-# grammars from this bundle when a pinned tree-sitter-<lang> module is absent.
-langs-extra = ["tree-sitter-language-pack>=1.0"]
 embeddings = ["numpy"]
-dev = ["pytest", "pytest-asyncio", "tree-sitter-language-pack>=1.0",
-       "python-lsp-server"]
-
-all = [
-    "tree-sitter-language-pack>=1.0",
-    "numpy",
-]
+all = ["codegraph[langs,embeddings]"]
+dev = ["codegraph[langs,embeddings]", "pytest", "pytest-asyncio",
+       "python-lsp-server", "build"]
 
 [project.scripts]
 codegraph = "codegraph.cli:main"
