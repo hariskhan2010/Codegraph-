@@ -203,7 +203,7 @@ MENU = [a for a in AGENTS.values() if a.in_menu()]
 
 _GLM_KIMI_NOTE = (
     "Note: GLM and Kimi as *models* run through one of the agents above (or "
-    "Claude Code) by pointing it at their API endpoint — pick that agent."
+    "Claude Code) by pointing it at their API endpoint - pick that agent."
 )
 
 
