@@ -3,13 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "codegraph"
+name = "code-graph"
 version = "0.5.0"
-description = "Code-to-queryable-graph. A behavior-compatible successor to graphify."
+description = "Turn a codebase into a persistent, queryable graph (SQLite + tree-sitter). A behavior-compatible successor to the graphify skill. Import and CLI are `codegraph`."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-keywords = ["code-graph", "call-graph", "tree-sitter", "mcp", "graphrag", "agent"]
+keywords = ["code-graph", "call-graph", "tree-sitter", "mcp", "graphrag", "agent",
+            "codegraph", "graphify"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -46,6 +47,11 @@ embeddings = ["numpy"]
 all = ["codegraph[langs,embeddings]"]
 dev = ["codegraph[langs,embeddings]", "pytest", "pytest-asyncio",
        "python-lsp-server", "build"]
+
+[project.urls]
+# TODO before publishing: point these at your real repo
+Homepage = "https://pypi.org/project/code-graph/"
+# Repository = "https://github.com/<you>/code-graph"
 
 [project.scripts]
 codegraph = "codegraph.cli:main"

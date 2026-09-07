@@ -6,7 +6,19 @@ version in `pyproject.toml`.
 
 ## 0.5.0 — 2026-09-07
 
-Feature-complete against `PLAN.md`. 87 tests.
+Feature-complete against `PLAN.md`. 102 tests. Pip-installable
+(PyPI name `code-graph`; command & import stay `codegraph`). Ships the
+`/codegraph` skill — `codegraph install-skill` copies it to `~/.claude/skills/`.
+
+### Added — skill-driven semantic pass
+- `codegraph extract --semantic skill` writes `codegraph-out/semantic-request.json`
+  instead of calling an API; the `/codegraph` skill (the session's own model)
+  fills `semantic-response.json` and `codegraph apply-semantic` ingests it —
+  free, graphify-style. Also `codegraph relabel-communities`.
+- Descriptive community labels (`Signals: score, ScoringEngine`) replacing
+  top-node names, with an optional LLM naming pass.
+- Framework route handlers get path-qualified labels (`POST api/payments/create-session`).
+- Report splits Code vs Documentation communities.
 
 ### Added — hardening (PLAN §8 ports)
 - `codegraph/_util.py`: `suppressed_fds` (silences native ANSI writes from the

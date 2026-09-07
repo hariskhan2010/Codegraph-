@@ -48,24 +48,22 @@ dashboard.
 
 ## Install
 
+The PyPI package is **`code-graph`**; the command and import are **`codegraph`**.
+
 ```bash
-# from a clone
-pip install .
-
-# from GitHub
-pip install "git+https://github.com/<you>/codegraph"
-
-# from a built wheel (python -m build → dist/)
-pip install dist/codegraph-*.whl
+pip install code-graph        # once published
+# or, right now:
+pip install .                 # from a clone
+pip install dist/code_graph-*.whl   # from a built wheel (python -m build)
 ```
 
-That's it — all 20 languages work out of the box (grammars come from
+All 20 languages work out of the box (grammars come from
 `tree-sitter-language-pack`). Optional extras:
 
 ```bash
-pip install "codegraph[langs]"        # pinned grammars for the core 10 (slightly faster)
-pip install "codegraph[embeddings]"   # numpy, for `codegraph embed`
-pip install -e ".[dev]"               # tests + build tooling
+pip install "code-graph[langs]"        # pinned grammars for the core 10 (slightly faster)
+pip install "code-graph[embeddings]"   # numpy, for `codegraph embed`
+pip install -e ".[dev]"                # tests + build tooling
 ```
 
 Then set it up for your agent:
@@ -77,12 +75,19 @@ codegraph install <path> [--platform NAME]     # registers the MCP server (claud
 
 ### Sharing it with someone
 
-Send them `dist/codegraph-0.5.0-py3-none-any.whl` (build it with `python -m build`).
+Send them `dist/code_graph-0.5.0-py3-none-any.whl` (build it with `python -m build`).
 They run:
 
 ```bash
-pip install codegraph-0.5.0-py3-none-any.whl   # needs Python 3.11+
+pip install code_graph-0.5.0-py3-none-any.whl   # needs Python 3.11+
 codegraph install-skill
+```
+
+### Publishing to PyPI
+
+```bash
+python -m build
+python -m twine upload dist/*        # needs a PyPI account + API token
 ```
 
 ## Use
