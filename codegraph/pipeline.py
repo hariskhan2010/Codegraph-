@@ -177,6 +177,16 @@ def extract(
     from .analyze import analyze
 
     cluster(db)
+    if backend is not None:
+        from .semantic import name_communities
+
+        try:
+            r = name_communities(db, backend,
+                                 progress=progress if progress else None)
+            if sem_stats is not None:
+                sem_stats["communities_named"] = r["named"]
+        except Exception:  # naming is best-effort; keep the heuristic labels
+            pass
     analyze(db)
 
     from .render.graph_json import write_graph_json

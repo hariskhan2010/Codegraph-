@@ -154,6 +154,64 @@ def annotate_file(db: Db, backend: Backend, rel: str, src_text: str) -> dict:
     return {"annotated": annotated, "amb_edges": amb, "dropped": dropped}
 
 
+_NAME_SYSTEM = """You label the communities (clusters) of a code graph. For each \
+community you get its id and a sample of member symbols with their files. Return \
+ONLY JSON: {"names": {"<id>": "<2-5 word Title Case label naming what this \
+cluster does>"}}. Base the label on the domain role (e.g. "Stripe Checkout Flow", \
+"JWT Auth & Sessions", "Candle Time Arithmetic"), not on the language. A cluster \
+that is only tests -> "<subject> Tests". No prose outside the JSON."""
+
+
+def name_communities(db: Db, backend: Backend, *, progress=None) -> dict:
+    """Replace the heuristic community labels with short LLM-written ones
+    (graphify's community-naming pass). Safe to skip — falls back to whatever
+    :mod:`codegraph.cluster` produced."""
+    comms = db.conn.execute(
+        "SELECT id, label FROM communities ORDER BY id"
+    ).fetchall()
+    if not comms:
+        return {"named": 0}
+    sizes = {
+        r["community"]: r["n"] for r in db.conn.execute(
+            "SELECT community, COUNT(*) n FROM nodes WHERE community IS NOT NULL "
+            "GROUP BY community"
+        ).fetchall()
+    }
+    lines: list[str] = []
+    for c in comms:
+        if sizes.get(c["id"], 0) < 3:
+            continue
+        members = db.conn.execute(
+            "SELECT label, source_file FROM nodes WHERE community=? "
+            "AND kind NOT IN ('file','stub') ORDER BY degree DESC LIMIT 12",
+            (c["id"],),
+        ).fetchall()
+        sample = "; ".join(f"{m['label']} ({m['source_file']})" for m in members)
+        lines.append(f'#{c["id"]} [{sizes.get(c["id"], 0)} nodes]: {sample}')
+    if not lines:
+        return {"named": 0}
+
+    raw = complete(backend, _NAME_SYSTEM, "\n".join(lines))
+    data = _parse(raw)
+    names = data.get("names") or {}
+    n = 0
+    with db.tx() as c:
+        for cid_s, name in names.items():
+            try:
+                cid = int(cid_s)
+            except (TypeError, ValueError):
+                continue
+            name = str(name).strip()[:60]
+            if not name:
+                continue
+            c.execute("UPDATE communities SET label=? WHERE id=?", (name, cid))
+            c.execute("UPDATE nodes SET community_name=? WHERE community=?", (name, cid))
+            n += 1
+    if progress:
+        progress({"communities_named": n})
+    return {"named": n}
+
+
 def run(db: Db, root: Path, backend: Backend, *, force: bool = False,
         progress=None) -> dict:
     """Annotate every code file whose ``semantic_hash`` is empty (or all, if

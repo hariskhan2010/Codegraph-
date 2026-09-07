@@ -12,6 +12,7 @@ identical ids run to run.
 from __future__ import annotations
 
 import hashlib
+import re
 
 import networkx as nx
 
@@ -138,20 +139,82 @@ def _cohesion(g: nx.Graph, nodes: list[int]) -> float:
     return sub.number_of_edges() / (n * (n - 1) / 2)
 
 
+_STOPDIRS = {"src", "app", "lib", "pkg", "internal", "backend", "frontend",
+             "server", "client", "core", "common", "shared", "packages", "apps"}
+
+
+def _titleize(seg: str) -> str:
+    seg = re.sub(r"[-_]+", " ", seg).strip()
+    return seg[:1].upper() + seg[1:] if seg else seg
+
+
 def _hub_labels(db: Db, groups: list[list[int]]) -> dict[int, str]:
-    id_to = {
-        int(r["id"]): (r["label"], r["degree"] or 0, r["kind"]) for r in db.nodes()
-    }
+    rows = {int(r["id"]): r for r in db.nodes()}
     out: dict[int, str] = {}
     for i, ns in enumerate(groups):
-        present = [(*id_to[n], n) for n in ns if n in id_to]  # (label, degree, kind, n)
-        if not present:
-            out[i] = f"Community {i}"
-            continue
-        # prefer a real code symbol; for a docs-only cluster, a heading beats the file
-        non_file = [p for p in present if p[2] not in ("file", "module", "stub", "section")]
-        sections = [p for p in present if p[2] == "section"]
-        pool = non_file or sections or present
-        pool.sort(key=lambda t: (-t[1], str(t[0])))
-        out[i] = pool[0][0].rstrip("()").lstrip(".") or f"Community {i}"
+        members = [rows[n] for n in ns if n in rows]
+        out[i] = _name_community(i, members)
     return out
+
+
+_GENERIC = {"main", "run", "get", "set", "handler", "handle", "init", "setup",
+            "step", "start", "stop", "send", "load", "save", "create", "update",
+            "process", "execute", "call", "make", "build", "compute", "check"}
+
+
+def _name_community(i: int, members: list) -> str:
+    """A short descriptive label. graphify uses an LLM for this; without one we
+    combine the shared directory with the 1-2 most connected real symbols, which
+    is usually enough to navigate by (``Signals: score, analyse``)."""
+    if not members:
+        return f"Community {i}"
+
+    code = [m for m in members if m["kind"] not in ("file", "module", "stub", "section")
+            and (m["file_type"] or "code") == "code"]
+    sections = [m for m in members if m["kind"] == "section"]
+
+    # documentation cluster -> the doc's earliest / top heading
+    if sections and not code:
+        sections.sort(key=lambda m: ((m["source_location"] or "L999999")
+                                     .lstrip("L").split("-")[0].zfill(7),
+                                     -(m["degree"] or 0)))
+        return sections[0]["label"]
+    if not code:
+        return f"Community {i}"
+
+    files = [m["source_file"] or "" for m in code]
+    dir_label = _dominant_dir(files)
+
+    code.sort(key=lambda m: (-(m["degree"] or 0), m["label"]))
+    syms: list[str] = []
+    for m in code:
+        s = (m["label"] or "").rstrip("()").lstrip(".")
+        if s and s.lower() not in _GENERIC and s not in syms:
+            syms.append(s)
+        if len(syms) == 2:
+            break
+    syms = syms or [(code[0]["label"] or "").rstrip("()").lstrip(".")]
+
+    sym_part = ", ".join(syms)
+    if dir_label:
+        return f"{dir_label}: {sym_part}" if sym_part else dir_label
+    return sym_part or f"Community {i}"
+
+
+def _dominant_dir(files: list[str]) -> str:
+    """The most specific meaningful directory shared by most members, titleized."""
+    from collections import Counter
+
+    segs: Counter = Counter()
+    for f in files:
+        parts = [p for p in f.split("/")[:-1] if p]
+        for depth, p in enumerate(parts):
+            if p.lower() in _STOPDIRS or p.startswith((".", "(")):
+                continue
+            segs[p] += 1 + depth  # deeper = more specific
+    if not segs:
+        return ""
+    best, count = segs.most_common(1)[0]
+    if count < max(2, len(files) * 0.4):
+        return ""
+    return _titleize(best)
