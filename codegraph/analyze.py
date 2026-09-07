@@ -31,7 +31,11 @@ def _digraph(db: Db) -> nx.MultiDiGraph:
 
 
 def _is_noise(row) -> bool:
-    if row["kind"] in ("file", "concept", "module", "stub"):
+    # doc headings ("section") connect only by `contains`; they are not code
+    # abstractions and must not rank as god nodes.
+    if row["kind"] in ("file", "concept", "module", "stub", "section"):
+        return True
+    if (row["file_type"] or "") in ("document", "paper"):
         return True
     lbl = (row["norm_label"] or "").rstrip("()").lstrip(".")
     return lbl in _BUILTIN_NOISE or not lbl
@@ -117,7 +121,7 @@ def suggested_questions(db: Db, gods: list[dict] | None = None) -> list[str]:
     has_out = {int(e["src"]) for e in db.edges() if e["relation"] == "calls"}
     entries = [
         by_id[n] for n in sorted(has_out - has_in)
-        if n in by_id and by_id[n]["kind"] in ("function", "method")
+        if n in by_id and by_id[n]["kind"] in ("function", "method", "route")
     ][:4]
 
     qs: list[str] = []
@@ -131,8 +135,15 @@ def suggested_questions(db: Db, gods: list[dict] | None = None) -> list[str]:
         name = e["label"].rstrip("()").lstrip(".")
         qs.append(f"What does {name} do end to end?")
 
+    # cohesive *code* communities only — doc-section clusters are naturally dense
     comm_hubs = db.conn.execute(
-        "SELECT label FROM communities ORDER BY cohesion DESC LIMIT 3"
+        "SELECT c.label FROM communities c JOIN ("
+        "  SELECT community, "
+        "  1.0*SUM(CASE WHEN kind='section' OR file_type IN ('document','paper') "
+        "              THEN 1 ELSE 0 END)/COUNT(*) AS df "
+        "  FROM nodes WHERE community IS NOT NULL GROUP BY community) d "
+        "ON d.community=c.id WHERE d.df < 0.5 "
+        "ORDER BY c.cohesion DESC LIMIT 3"
     ).fetchall()
     for r in comm_hubs:
         if r["label"] and not r["label"].startswith("Community "):

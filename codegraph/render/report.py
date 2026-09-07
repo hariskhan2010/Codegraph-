@@ -53,13 +53,31 @@ def build_report(db: Db) -> str:
             "GROUP BY community"
         ).fetchall()
     }
-    if comm_rows:
+    # classify each community as code vs docs so markdown-heavy repos don't drown
+    # the code structure in the navigation list
+    doc_frac = {
+        r["community"]: (r["docs"] / r["total"] if r["total"] else 0.0)
+        for r in db.conn.execute(
+            "SELECT community, COUNT(*) total, "
+            "SUM(CASE WHEN kind='section' OR file_type IN ('document','paper') "
+            "         THEN 1 ELSE 0 END) docs "
+            "FROM nodes WHERE community IS NOT NULL GROUP BY community"
+        ).fetchall()
+    }
+    code_comms = [r for r in comm_rows if doc_frac.get(r["id"], 0) < 0.5]
+    doc_comms = [r for r in comm_rows if doc_frac.get(r["id"], 0) >= 0.5]
+
+    if code_comms:
         add("## Community Hubs (Navigation)")
         add("")
-        for r in comm_rows:
+        for r in code_comms:
             if sizes.get(r["id"], 0) >= 3:
                 add(f"- **{r['label']}** — {sizes.get(r['id'], 0)} nodes")
         add("")
+        if doc_comms:
+            add(f"_{len(doc_comms)} documentation-only communities omitted here "
+                "(see Communities below)._")
+            add("")
 
     gods = analysis.get("god_nodes", [])
     if gods:
@@ -112,23 +130,33 @@ def build_report(db: Db) -> str:
             add("")
 
     if comm_rows:
-        add(f"## Communities ({len(comm_rows)} total)")
+        add(f"## Communities ({len(code_comms)} code, {len(doc_comms)} docs)")
         add("")
-        for r in comm_rows:
-            n = sizes.get(r["id"], 0)
-            if n < 3:
-                continue
-            members = [
-                row["label"]
-                for row in db.conn.execute(
-                    "SELECT label FROM nodes WHERE community=? ORDER BY degree DESC LIMIT 8",
-                    (r["id"],),
-                ).fetchall()
-            ]
-            add(f'### Community {r["id"]} - "{r["label"]}"')
-            add(f"Cohesion: {r['cohesion']:.2f}")
-            add(f"Nodes ({n}): {', '.join(members)}" + (" (+more)" if n > 8 else ""))
+
+        def _emit(rows, heading):
+            if not rows:
+                return
+            add(f"### {heading}")
             add("")
+            for r in rows:
+                n = sizes.get(r["id"], 0)
+                if n < 3:
+                    continue
+                members = [
+                    row["label"]
+                    for row in db.conn.execute(
+                        "SELECT label FROM nodes WHERE community=? "
+                        "ORDER BY degree DESC LIMIT 8",
+                        (r["id"],),
+                    ).fetchall()
+                ]
+                add(f'#### Community {r["id"]} — "{r["label"]}"  '
+                    f"(cohesion {r['cohesion']:.2f})")
+                add(f"{', '.join(members)}" + (" (+more)" if n > 8 else ""))
+                add("")
+
+        _emit(code_comms, "Code")
+        _emit(doc_comms, "Documentation")
 
     return "\n".join(L).rstrip() + "\n"
 

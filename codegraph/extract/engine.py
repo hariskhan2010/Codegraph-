@@ -46,6 +46,42 @@ def _loc(node: Node) -> str:
     return f"L{a}" if a == b else f"L{a}-L{b}"
 
 
+_HTTP_VERBS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+
+
+def _route_prefix(rel: str) -> str | None:
+    """Turn a framework route file into its URL-ish path so identically-named
+    handlers (`POST` in every Next.js `route.ts`) get distinct labels.
+
+    ``src/app/api/cart/route.ts``            -> ``api/cart``
+    ``app/(shop)/products/[id]/route.ts``    -> ``products/[id]``   (route group dropped)
+    ``pages/api/checkout.ts``                -> ``api/checkout``
+    ``src/routes/users.$id.tsx``             -> ``users/:id``  (Remix-ish, best effort)
+    """
+    parts = rel.replace("\\", "/").split("/")
+    stem = parts[-1].rsplit(".", 1)[0]
+    lower = [p.lower() for p in parts]
+
+    # Next.js App Router: .../app/**/route.{ts,js} (or page/layout)
+    if stem in ("route", "page", "layout", "default") and "app" in lower:
+        i = lower.index("app")
+        segs = [p for p in parts[i + 1 : -1]
+                if not (p.startswith("(") and p.endswith(")"))]
+        path = "/".join(segs)
+        return path or "/"
+
+    # Next.js / Nuxt Pages Router: .../pages/**/*.{ts,js,vue}
+    if "pages" in lower:
+        i = lower.index("pages")
+        segs = list(parts[i + 1 : -1])
+        if stem != "index":
+            segs.append(stem)
+        path = "/".join(segs)
+        return path or "/"
+
+    return None
+
+
 def _matches(lang: str, which: str, root: Node) -> list[dict]:
     q = compiled_query(lang, which)
     if q is None:
@@ -137,6 +173,7 @@ def extract_file(rel: str, src: bytes, lang: str) -> FileResult:
             d.slug = ids.make_slug(d.slug, f"l{d.line}")
         seen_slugs.add(d.slug)
 
+    route = _route_prefix(rel)
     same_file_defs: dict[str, _Def] = {}
     for d in defs:
         parent_is_class = d.parent is not None and d.parent.is_class
@@ -145,6 +182,13 @@ def extract_file(rel: str, src: bytes, lang: str) -> FileResult:
             label = d.name
         elif parent_is_class:
             label = f".{d.name}()"
+        elif route and d.parent is None and d.name.upper() in _HTTP_VERBS:
+            # Next.js / framework route handler: disambiguate `POST` by its path
+            label = f"{d.name.upper()} {route}"
+            kind = "route"
+        elif route and d.parent is None and d.name in ("default", "handler", "Page"):
+            label = f"{route} ({d.name})"
+            kind = "route"
         else:
             label = f"{d.name}()"
         res.nodes.append({

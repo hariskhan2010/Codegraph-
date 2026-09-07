@@ -136,6 +136,9 @@ def _score(db: Db, terms: list[str]) -> list[tuple[int, float]]:
                 scores[nid] += 0.5
         if matched and terms:
             scores[nid] *= (0.4 + 0.6 * matched / len(terms))
+        # a doc heading that matches a keyword should not outrank the real symbol
+        if node["kind"] == "section" or (node["file_type"] or "") in ("document", "paper"):
+            scores[nid] *= 0.5
     ranked = sorted(scores.items(), key=lambda kv: (-kv[1], by_id[kv[0]]["degree"] or 0))
     return [(nid, sc) for nid, sc in ranked if sc > 0]
 

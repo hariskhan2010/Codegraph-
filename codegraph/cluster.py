@@ -148,9 +148,10 @@ def _hub_labels(db: Db, groups: list[list[int]]) -> dict[int, str]:
         if not present:
             out[i] = f"Community {i}"
             continue
-        # prefer a real symbol (class/function) over the file node
-        non_file = [p for p in present if p[2] not in ("file", "module", "stub")]
-        pool = non_file or present
+        # prefer a real code symbol; for a docs-only cluster, a heading beats the file
+        non_file = [p for p in present if p[2] not in ("file", "module", "stub", "section")]
+        sections = [p for p in present if p[2] == "section"]
+        pool = non_file or sections or present
         pool.sort(key=lambda t: (-t[1], str(t[0])))
         out[i] = pool[0][0].rstrip("()").lstrip(".") or f"Community {i}"
     return out
