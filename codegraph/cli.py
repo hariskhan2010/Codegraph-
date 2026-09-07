@@ -62,12 +62,69 @@ def cmd_extract(args) -> int:
         print(f"semantic ({st['semantic_backend']}): {s['files']} files · "
               f"{s['annotated']} rationale · {s['amb_edges']} ambiguous edges · "
               f"{s['dropped']} dropped · {s['failed']} failed")
-    elif not args.no_semantic:
+    elif not args.no_semantic and args.semantic != "skill":
         print("semantic: no LLM backend available (set an API key or install "
               "`claude`) — AST-only graph")
     if st.get("backup"):
         print(f"backed up previous artifacts -> {st['backup']}")
+    if st.get("semantic_request"):
+        r = st["semantic_request"]
+        print("\nsemantic pass deferred to the /codegraph skill:")
+        print(f"  wrote {r['path']}  ({r['files']} files, {r['communities']} communities)")
+        print("  the skill fills semantic-response.json, then: "
+              f"codegraph apply-semantic {args.path}")
     print(f"-> {out_dir(Path(args.path).resolve())}")
+    return 0
+
+
+def cmd_apply_semantic(args) -> int:
+    from .analyze import analyze
+    from .cluster import cluster  # noqa: F401
+    from .config import out_dir
+    from .render.graph_json import write_graph_json
+    from .render.html import write_html
+    from .render.report import write_report
+    from .semantic import apply_response
+
+    db = _need_db(Path(args.path))
+    root = Path(args.path).resolve()
+    src = args.response or (out_dir(root) / "semantic-response.json")
+    r = apply_response(db, root, src)
+    db.reindex_fts()
+    db.recompute_degrees()
+    analyze(db)
+    write_graph_json(db, out_dir(root))
+    write_report(db, out_dir(root))
+    write_html(db, out_dir(root))
+    db.close()
+    print(f"applied: {r['annotated']} rationale, {r['amb_edges']} ambiguous edges, "
+          f"{r['communities_named']} communities named ({r['dropped']} dropped)")
+    print(f"-> {out_dir(root)}")
+    return 0
+
+
+def cmd_relabel_communities(args) -> int:
+    import json
+
+    from .config import out_dir
+    from .semantic import apply_community_names, community_digest
+
+    db = _need_db(Path(args.path))
+    root = Path(args.path).resolve()
+    if args.names:
+        names = json.loads(Path(args.names).read_text(encoding="utf-8"))
+        names = names.get("community_names", names)  # accept either shape
+        n = apply_community_names(db, names)
+        from .render.graph_json import write_graph_json
+        from .render.report import write_report
+
+        write_graph_json(db, out_dir(root))
+        write_report(db, out_dir(root))
+        db.close()
+        print(f"renamed {n} communities -> {out_dir(root)}")
+    else:
+        print(json.dumps(community_digest(db), indent=2))
+        db.close()
     return 0
 
 
@@ -498,8 +555,9 @@ def build_parser() -> argparse.ArgumentParser:
     e = with_path(sub.add_parser("extract", help="full build"))
     e.add_argument("--force", action="store_true")
     e.add_argument("--semantic", metavar="BACKEND",
-                   help="LLM backend for the annotation pass "
-                        "(anthropic|openai|gemini|ollama|claude-cli); default: auto-detect")
+                   help="LLM for the annotation + community-naming pass: "
+                        "anthropic|openai|gemini|ollama|claude-cli, `auto` (default), "
+                        "`skill` (defer to the /codegraph skill — no API key), or `none`")
     e.add_argument("--no-semantic", action="store_true", help="skip the LLM pass")
     e.add_argument("--no-docs", action="store_true",
                    help="skip Markdown / reST / AsciiDoc section indexing")
@@ -572,6 +630,17 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--top", type=int, default=15)
     g.add_argument("--json", action="store_true")
     g.set_defaults(func=cmd_god_nodes)
+
+    aps = with_path(sub.add_parser("apply-semantic",
+                    help="ingest the /codegraph skill's semantic-response.json"))
+    aps.add_argument("--response", help="path to the response JSON "
+                     "(default: <out>/semantic-response.json)")
+    aps.set_defaults(func=cmd_apply_semantic)
+
+    rlc = with_path(sub.add_parser("relabel-communities",
+                    help="print community members as JSON, or apply a {id: name} map"))
+    rlc.add_argument("names", nargs="?", help="JSON file of {id: name} (omit to dump members)")
+    rlc.set_defaults(func=cmd_relabel_communities)
 
     with_path(sub.add_parser("stats", help="graph size summary")).set_defaults(func=cmd_stats)
 

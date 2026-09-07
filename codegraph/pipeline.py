@@ -158,7 +158,8 @@ def extract(
 
     sem_stats = None
     backend = None
-    if semantic not in (None, "none"):
+    want_skill = semantic == "skill"
+    if semantic not in (None, "none", "skill"):
         from .llm import detect_backend, make_backend
 
         backend = detect_backend() if semantic == "auto" else make_backend(semantic)
@@ -197,7 +198,14 @@ def extract(
     write_report(db, out_dir(root))
     write_html(db, out_dir(root))
 
+    req_stats = None
+    if want_skill:
+        from .semantic import write_request
+
+        req_stats = write_request(db, root, force=semantic_force or force)
+
     stats = db.stats()
+    stats["semantic_request"] = req_stats
     stats["files_indexed"] = len(results)
     stats["skipped_sensitive"] = len(det.skipped_sensitive)
     stats["resolved_xfile_edges"] = resolved

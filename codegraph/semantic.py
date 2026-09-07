@@ -70,12 +70,16 @@ def _line_of(loc: str | None) -> int:
     return int(m.group(1)) if m else 0
 
 
-def annotate_file(db: Db, backend: Backend, rel: str, src_text: str) -> dict:
-    rows = db.conn.execute(
+def _file_symbols(db: Db, rel: str):
+    return db.conn.execute(
         "SELECT id, label, kind, source_location FROM nodes "
         "WHERE source_file=? AND origin IN ('ast','semantic') AND kind!='file'",
         (rel,),
     ).fetchall()
+
+
+def annotate_file(db: Db, backend: Backend, rel: str, src_text: str) -> dict:
+    rows = _file_symbols(db, rel)
     if not rows:
         return {"annotated": 0, "amb_edges": 0, "dropped": 0}
 
@@ -87,6 +91,15 @@ def annotate_file(db: Db, backend: Backend, rel: str, src_text: str) -> dict:
     user = f"FILE: {rel}\n\nSYMBOLS:\n{listing}\n\nSOURCE:\n```\n{body}\n```"
     raw = complete(backend, _SYSTEM, user)
     data = _parse(raw)
+    return apply_file_annotations(db, rel, data)
+
+
+def apply_file_annotations(db: Db, rel: str, data: dict) -> dict:
+    """Ingest one file's ``{annotations, ambiguous_edges}`` payload (from any
+    source — an API model, ``claude-cli``, or the ``/codegraph`` skill)."""
+    rows = _file_symbols(db, rel)
+    if not rows:
+        return {"annotated": 0, "amb_edges": 0, "dropped": 0}
 
     # index existing nodes by normalized label -> [(id, line)]
     idx: dict[str, list[tuple[int, int]]] = {}
@@ -162,38 +175,34 @@ cluster does>"}}. Base the label on the domain role (e.g. "Stripe Checkout Flow"
 that is only tests -> "<subject> Tests". No prose outside the JSON."""
 
 
-def name_communities(db: Db, backend: Backend, *, progress=None) -> dict:
-    """Replace the heuristic community labels with short LLM-written ones
-    (graphify's community-naming pass). Safe to skip — falls back to whatever
-    :mod:`codegraph.cluster` produced."""
-    comms = db.conn.execute(
-        "SELECT id, label FROM communities ORDER BY id"
-    ).fetchall()
-    if not comms:
-        return {"named": 0}
+def community_digest(db: Db, *, min_size: int = 3, limit: int = 14) -> list[dict]:
+    """One entry per non-trivial community: id, size, current heuristic label, and
+    a sample of its most-connected members. Feeds both the LLM naming pass and the
+    ``/codegraph`` skill's naming step."""
     sizes = {
         r["community"]: r["n"] for r in db.conn.execute(
             "SELECT community, COUNT(*) n FROM nodes WHERE community IS NOT NULL "
             "GROUP BY community"
         ).fetchall()
     }
-    lines: list[str] = []
-    for c in comms:
-        if sizes.get(c["id"], 0) < 3:
+    out: list[dict] = []
+    for c in db.conn.execute("SELECT id, label FROM communities ORDER BY id").fetchall():
+        if sizes.get(c["id"], 0) < min_size:
             continue
         members = db.conn.execute(
-            "SELECT label, source_file FROM nodes WHERE community=? "
-            "AND kind NOT IN ('file','stub') ORDER BY degree DESC LIMIT 12",
-            (c["id"],),
+            "SELECT label, kind, source_file FROM nodes WHERE community=? "
+            "AND kind NOT IN ('file','stub') ORDER BY degree DESC LIMIT ?",
+            (c["id"], limit),
         ).fetchall()
-        sample = "; ".join(f"{m['label']} ({m['source_file']})" for m in members)
-        lines.append(f'#{c["id"]} [{sizes.get(c["id"], 0)} nodes]: {sample}')
-    if not lines:
-        return {"named": 0}
+        out.append({
+            "id": c["id"], "size": sizes.get(c["id"], 0), "current_label": c["label"],
+            "members": [{"label": m["label"], "kind": m["kind"],
+                         "file": m["source_file"]} for m in members],
+        })
+    return out
 
-    raw = complete(backend, _NAME_SYSTEM, "\n".join(lines))
-    data = _parse(raw)
-    names = data.get("names") or {}
+
+def apply_community_names(db: Db, names: dict) -> int:
     n = 0
     with db.tx() as c:
         for cid_s, name in names.items():
@@ -207,6 +216,23 @@ def name_communities(db: Db, backend: Backend, *, progress=None) -> dict:
             c.execute("UPDATE communities SET label=? WHERE id=?", (name, cid))
             c.execute("UPDATE nodes SET community_name=? WHERE community=?", (name, cid))
             n += 1
+    return n
+
+
+def name_communities(db: Db, backend: Backend, *, progress=None) -> dict:
+    """Replace the heuristic community labels with short LLM-written ones
+    (graphify's community-naming pass). Safe to skip — falls back to whatever
+    :mod:`codegraph.cluster` produced."""
+    digest = community_digest(db)
+    if not digest:
+        return {"named": 0}
+    lines = [
+        f'#{d["id"]} [{d["size"]} nodes]: '
+        + "; ".join(f'{m["label"]} ({m["file"]})' for m in d["members"])
+        for d in digest
+    ]
+    data = _parse(complete(backend, _NAME_SYSTEM, "\n".join(lines)))
+    n = apply_community_names(db, data.get("names") or {})
     if progress:
         progress({"communities_named": n})
     return {"named": n}
@@ -257,6 +283,106 @@ def run(db: Db, root: Path, backend: Backend, *, force: bool = False,
         if progress:
             progress({"file": f["path"], **r})
     db.set_meta("semantic_backend", backend.name)
+    db.set_meta("semantic_at", str(time.time()))
+    db.conn.commit()
+    return totals
+
+
+# --------------------------------------------------------------------------- #
+# skill-driven semantic pass — the /codegraph skill (the session's own model)
+# does the annotation for free, graphify-style, instead of a separate backend.
+# --------------------------------------------------------------------------- #
+
+REQUEST_NAME = "semantic-request.json"
+RESPONSE_NAME = "semantic-response.json"
+
+_SKILL_INSTRUCTIONS = (
+    "You are the semantic pass for codegraph. For every file in `files`, write a "
+    "one-line `rationale` (<=15 words, what the symbol is for) for each of its "
+    "`symbols`, using only labels from that list, and list any `ambiguous_edges` "
+    "(dynamic/duck-typed calls a parser can't see). For every entry in "
+    "`communities`, write a 2-5 word Title Case `name` for its domain role "
+    "(\"Stripe Checkout Flow\", \"JWT Auth & Sessions\"); a tests-only cluster -> "
+    "\"<subject> Tests\". Write the result to " + RESPONSE_NAME + " as "
+    '{"annotations": {"<file>": [{"label","line","rationale","concepts"}]}, '
+    '"ambiguous_edges": {"<file>": [{"src","dst","relation","why"}]}, '
+    '"community_names": {"<id>": "<name>"}}. Then run '
+    "`codegraph apply-semantic <path>`."
+)
+
+
+def write_request(db: Db, root: Path, *, max_files: int = 400,
+                  max_chars: int = _MAX_FILE_CHARS, force: bool = False) -> dict:
+    """Emit ``semantic-request.json`` — everything the skill needs to do the
+    annotation + community naming itself. Does not call any model."""
+    files = db.conn.execute(
+        "SELECT path, content_sha256, semantic_hash FROM files "
+        "WHERE file_type='code' AND status='present' ORDER BY path"
+    ).fetchall()
+    payload_files = []
+    for f in files:
+        if not force and f["semantic_hash"] and f["semantic_hash"] == f["content_sha256"]:
+            continue
+        rows = _file_symbols(db, f["path"])
+        if not rows:
+            continue
+        try:
+            text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        payload_files.append({
+            "file": f["path"],
+            "symbols": [{"label": r["label"], "line": _line_of(r["source_location"]),
+                         "kind": r["kind"]} for r in rows],
+            "source": text[:max_chars],
+        })
+        if len(payload_files) >= max_files:
+            break
+
+    from .config import out_dir
+
+    req = {
+        "instructions": _SKILL_INSTRUCTIONS,
+        "root": str(root),
+        "files": payload_files,
+        "communities": community_digest(db),
+    }
+    target = out_dir(root) / REQUEST_NAME
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(req, indent=1, ensure_ascii=False), encoding="utf-8")
+    return {"files": len(payload_files), "communities": len(req["communities"]),
+            "path": str(target)}
+
+
+def apply_response(db: Db, root: Path, response: dict | str | Path) -> dict:
+    """Ingest the skill's ``semantic-response.json`` back into the graph."""
+    from .config import out_dir
+
+    if isinstance(response, (str, Path)):
+        p = Path(response)
+        if not p.exists():
+            p = out_dir(root) / RESPONSE_NAME
+        response = json.loads(p.read_text(encoding="utf-8"))
+
+    ann = response.get("annotations") or {}
+    amb = response.get("ambiguous_edges") or {}
+    totals = {"files": 0, "annotated": 0, "amb_edges": 0, "dropped": 0}
+    for rel in set(ann) | set(amb):
+        data = {"annotations": ann.get(rel, []),
+                "ambiguous_edges": amb.get(rel, [])}
+        r = apply_file_annotations(db, rel, data)
+        totals["files"] += 1
+        for k in ("annotated", "amb_edges", "dropped"):
+            totals[k] += r[k]
+        row = db.conn.execute(
+            "SELECT content_sha256 FROM files WHERE path=?", (rel,)
+        ).fetchone()
+        if row:
+            db.conn.execute("UPDATE files SET semantic_hash=? WHERE path=?",
+                            (row["content_sha256"], rel))
+    totals["communities_named"] = apply_community_names(
+        db, response.get("community_names") or {})
+    db.set_meta("semantic_backend", "skill")
     db.set_meta("semantic_at", str(time.time()))
     db.conn.commit()
     return totals
