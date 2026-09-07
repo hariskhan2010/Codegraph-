@@ -9,7 +9,8 @@ See [`PLAN.md`](PLAN.md) for the full design and rationale.
 
 ## Status
 
-**Complete (Phases 1–5)** — 87 tests passing.
+**Complete (Phases 1–5 + hardening)** — 93 tests passing. git-tracked, CI on
+Linux + Windows × py3.11/3.12, MIT-licensed, builds a clean wheel + sdist.
 
 Commands: `extract`, `update`, `watch`, `check-update`, `query` (`--all`),
 `context`, `explain`, `path`, `affected`, `god-nodes`, `diagnose`, `embed`,
