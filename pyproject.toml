@@ -52,6 +52,7 @@ codegraph = "codegraph.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["codegraph"]
+artifacts = ["codegraph/skill/SKILL.md"]
 
 [tool.hatch.build.targets.sdist]
 include = ["codegraph", "tests", "PLAN.md", "CHANGELOG.md", "LICENSE", "README.md"]

@@ -2,9 +2,9 @@
 
 Commands: extract / update / watch / check-update / query / context / explain /
 path / affected / god-nodes / stats / diagnose / embed / merge-graphs / global /
-add / clone / install (multi-platform) / merge-driver / prs / export / serve / save-result /
-reflect. Command names and shapes match graphify so the ``/codegraph`` agent
-skill and existing configs carry over.
+add / clone / install (multi-platform) / install-skill / merge-driver / prs /
+export / serve / save-result / reflect. Command names and shapes match graphify
+so the ``/codegraph`` agent skill and existing configs carry over.
 """
 
 from __future__ import annotations
@@ -228,6 +228,23 @@ def cmd_merge(args) -> int:
         print(f"  {s['name']}: {s['nodes']} nodes, {s['edges']} edges")
     print(f"\nmerged -> {r['nodes']} nodes · {r['edges']} edges · "
           f"{r['communities']} communities\n-> {r['out']}")
+    return 0
+
+
+def cmd_install_skill(args) -> int:
+    import shutil
+    from importlib import resources
+
+    dest_dir = Path(args.dir).expanduser() if args.dir else \
+        Path.home() / ".claude" / "skills" / "codegraph"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    src = resources.files("codegraph.skill") / "SKILL.md"
+    dest = dest_dir / "SKILL.md"
+    if dest.exists() and not args.force:
+        sys.exit(f"{dest} already exists — pass --force to overwrite")
+    shutil.copyfile(str(src), dest)
+    print(f"installed the /codegraph skill -> {dest}")
+    print("restart Claude Code (or your agent) to pick it up")
     return 0
 
 
@@ -584,6 +601,12 @@ def build_parser() -> argparse.ArgumentParser:
     mg.add_argument("-o", "--out", required=True, help="output project root")
     mg.add_argument("--names", help="comma-separated tag per source (default: dir name)")
     mg.set_defaults(func=cmd_merge)
+
+    isk = sub.add_parser("install-skill",
+                         help="copy the /codegraph agent skill into ~/.claude/skills/")
+    isk.add_argument("--dir", help="target skill dir (default: ~/.claude/skills/codegraph)")
+    isk.add_argument("--force", action="store_true")
+    isk.set_defaults(func=cmd_install_skill)
 
     gl = sub.add_parser("global", help="user-level graph registry (cross-repo query)")
     gl.add_argument("action", choices=["list", "add", "remove"])

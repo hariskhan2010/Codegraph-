@@ -68,7 +68,22 @@ pip install "codegraph[embeddings]"   # numpy, for `codegraph embed`
 pip install -e ".[dev]"               # tests + build tooling
 ```
 
-Then wire it into Claude Code / Cursor / … : `codegraph install <path> [--platform NAME]`.
+Then set it up for your agent:
+
+```bash
+codegraph install-skill                        # copies the /codegraph skill into ~/.claude/skills/
+codegraph install <path> [--platform NAME]     # registers the MCP server (claude/cursor/vscode/windsurf/zed)
+```
+
+### Sharing it with someone
+
+Send them `dist/codegraph-0.5.0-py3-none-any.whl` (build it with `python -m build`).
+They run:
+
+```bash
+pip install codegraph-0.5.0-py3-none-any.whl   # needs Python 3.11+
+codegraph install-skill
+```
 
 ## Use
 
