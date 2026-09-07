@@ -75,7 +75,13 @@ def cmd_update(args) -> int:
     from .pipeline import update
 
     st = update(args.path)
+    n = st.get("files_indexed", 0)
+    print(f"re-indexed {n} changed file{'s' if n != 1 else ''}"
+          if n else "no files changed")
     print(f"{st['nodes']} nodes · {st['edges']} edges · {st['communities']} communities")
+    if st.get("backup"):
+        print(f"backed up previous artifacts -> {st['backup']}")
+    print(f"-> {out_dir(Path(args.path).resolve())}")
     return 0
 
 
