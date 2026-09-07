@@ -3,13 +3,14 @@
 > A behavior-compatible successor to **graphify** that keeps everything good about it
 > and fixes the structural problems that generate its bug tail.
 >
-> Status: **Complete — Phases 1–5** (2026-09-07). Design reconstructed from the
-> research session (graphify `graphifyy` 0.9.54 internals + 3 deep-dive agents);
-> 87 tests passing. 20 languages, SCIP + LSP resolver tiers, 9 export formats +
-> live Neo4j load, document + URL/arXiv/PDF/Notion/Confluence ingestion, MCP
-> (stdio + Streamable-HTTP/SSE), embeddings, cross-repo registry, PR impact,
-> git merge-driver, 6-platform `install`. §9 end lists what would be a separate
-> package.
+> Status: **Complete — Phases 1–5 + hardening** (2026-09-07). v0.5.0, 93 tests,
+> git-tracked with CI, LICENSE, CHANGELOG. Design reconstructed from the research
+> session (graphify `graphifyy` 0.9.54 internals + 3 deep-dive agents).
+> 20 languages, SCIP + LSP resolver tiers, 9 export formats + live Neo4j load,
+> document + URL/arXiv/PDF/Notion/Confluence ingestion, MCP (stdio +
+> Streamable-HTTP/SSE), embeddings, cross-repo registry, PR impact, git
+> merge-driver, 6-platform `install`, all PLAN §8 robustness ports. §9 end lists
+> the only remaining items (would each be a separate package).
 
 ---
 
@@ -551,11 +552,28 @@ From the deep-dive research — these are load-bearing, keep the behavior:
   tree → Markdown), `codegraph add confluence:<id|url>` (storage-format HTML →
   text). Also recognises `*.notion.so` / `*.atlassian.net/wiki` URLs directly.
 
+### Phase 6 — hardening (PLAN §8 ports) — ✅ DONE (2026-09-07)
+- ✅ `codegraph/_util.py`: `suppressed_fds` (fd-level dup2 so native ANSI from the
+  Leiden partitioner can't corrupt the PowerShell 5.1 scroll buffer, #19);
+  `atomic_replace` (retry + copy-then-delete fallback for AV/editor-locked files);
+  `long_path` (`\\?\` prefix past `MAX_PATH`, incl. UNC).
+- ✅ Backup-on-write — a graph with LLM rationale or embeddings is copied to
+  `graphify-out/<date>/` before a rebuild overwrites it (`_backup_if_protected`).
+- ✅ Discrete INFERRED confidence — `{0.55, 0.65, 0.75, 0.85, 0.95}` ladder by
+  signal strength in `resolve_calls`; `quantize_confidence()` snaps any
+  extractor-supplied INFERRED score to a rung.
+- ✅ Fixed the `graspologic` Leiden path (it had always silently fallen back to
+  Louvain — `_as_sets` was being fed `.values()` instead of the mapping).
+- ✅ Release scaffolding — git repo, `LICENSE` (MIT), `CHANGELOG.md`,
+  `.github/workflows/ci.yml` (ubuntu + windows × py3.11/3.12), sdist include list,
+  PyPI classifiers/keywords.
+
 ### Genuinely out of scope (would be their own packages)
 - Twitter/X thread scraping (auth churn, ToS).
 - A hosted web dashboard / SaaS.
 - `install` for every niche agent platform (the 6 covered are the ones with
   meaningful share; the pattern in `installers.py` is one dict entry each).
+- Publishing to PyPI (needs an account / token — the package builds clean).
 
 ---
 
