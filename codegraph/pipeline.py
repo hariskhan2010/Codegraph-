@@ -216,12 +216,18 @@ def check_update(root: Path | str) -> dict:
     db.close()
 
     det = detect(root)
-    now = {f.rel: f for f in det.code}
+    # `extract` indexes code + docs; ingested sources under the output dir are
+    # never walked and must not be reported as deleted.
+    walked = list(det.code) + [f for f in det.files
+                               if f.file_type in ("document", "paper")]
+    now = {f.rel: f for f in walked}
+    ingested_prefix = out_dir(root).name + "/"
 
     changed = sorted(r for r in now if r in prev
                      and prev[r]["content_sha256"] != now[r].content_sha256)
     added = sorted(r for r in now if r not in prev)
-    deleted = sorted(r for r in prev if r not in now)
+    deleted = sorted(r for r in prev
+                     if r not in now and not r.startswith(ingested_prefix))
 
     head = _git_head(root)
     head_moved = bool(built and head and built[:12] != head[:12])
