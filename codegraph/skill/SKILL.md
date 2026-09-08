@@ -55,21 +55,28 @@ graphify. Read `<path>/codegraph-out/semantic-request.json` first; codegraph
 picks the shape:
 
 **A. Fanned out (`"chunked": true`)** — the common case for a real repo.
-codegraph wrote `codegraph-out/semantic/request-001.json … request-NNN.json`
-plus `semantic/communities.json`. **Dispatch one general-purpose subagent per
-chunk IN A SINGLE MESSAGE** (parallel) — hand each the text of its
-`request-NNN.json` and have it write `semantic/response-NNN.json`:
+codegraph wrote `codegraph-out/semantic/request-001.json … request-NNN.json`,
+`semantic/communities.json`, and (if the repo has docs) `semantic/ideas.json`.
+**Dispatch one general-purpose subagent per `request-NNN.json` IN A SINGLE
+MESSAGE** (parallel) — hand each the text of its file and have it write
+`semantic/response-NNN.json`:
 ```json
 { "annotations": { "<file>": [ {"label":"…","line":12,
      "rationale":"<=15 words: what it's for","concepts":["…"]} ] },
   "ambiguous_edges": { "<file>": [ {"src":"…","dst":"…",
      "relation":"references","why":"<=12 words"} ] } }
 ```
-Handle `semantic/communities.json` too (one more subagent, or yourself) →
-`semantic/communities-response.json` with
-`{"community_names": {"0":"Stripe Checkout Flow", …}}`. When every
-`response-NNN.json` and the communities file exist, run
-**`codegraph apply-semantic <path>`** — it merges them.
+In the same message dispatch:
+- one subagent for `semantic/ideas.json` → `semantic/ideas-response.json`
+  (`{"concepts":[…],"idea_edges":[…]}` — the cross-doc idea graph: standalone
+  concept nodes + `semantically_similar_to` / `conceptually_related_to` /
+  `rationale_for` links). Follow that file's own `instructions`.
+- one for `semantic/communities.json` (or do it yourself) →
+  `semantic/communities-response.json` = `{"community_names": {"0":"…"}}`.
+
+When every `response-NNN.json`, `ideas-response.json`, and
+`communities-response.json` exist, run **`codegraph apply-semantic <path>`** — it
+merges them all.
 
 **B. Single file (no `chunked` key)** — small repo. The request carries `files`
 (each with `symbols` + `source`) and `communities`. Write
