@@ -44,8 +44,8 @@ langs = [
     "tree-sitter-rust",
 ]
 embeddings = ["numpy"]
-all = ["codegraph[langs,embeddings]"]
-dev = ["codegraph[langs,embeddings]", "pytest", "pytest-asyncio",
+all = ["code-graph[langs,embeddings]"]
+dev = ["code-graph[langs,embeddings]", "pytest", "pytest-asyncio",
        "python-lsp-server", "build"]
 
 [project.urls]

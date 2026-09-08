@@ -13,3 +13,15 @@ codegraph-out/
 *.db-shm
 .venv/
 venv/
+
+# npm wrapper — local install artifacts
+npm/node_modules/
+npm/bin/codegraph-bin*
+npm/bin/.mode
+npm/bin/.python
+npm/*.tgz
+
+# PyInstaller
+packaging/build/
+packaging/dist/
+*.manifest
