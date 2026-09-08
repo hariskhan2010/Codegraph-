@@ -47,6 +47,7 @@ def cmd_extract(args) -> int:
     st = extract(args.path, force=args.force, semantic=semantic,
                  docs=not args.no_docs, scip=scip, lsp=args.lsp,
                  semantic_chunk_files=args.chunk_files,
+                 whisper_model=args.whisper_model,
                  progress=prog if args.verbose else None)
     print(f"\n{st['nodes']} nodes · {st['edges']} edges · {st['communities']} communities "
           f"· {st['files']} files")
@@ -122,6 +123,7 @@ def cmd_apply_semantic(args) -> int:
     src = (f"{r['merged_chunks']} chunk responses"
            if r.get("merged_chunks") else "semantic-response.json")
     ideas = (f", {r['concepts']} concepts + {r['idea_edges']} idea edges"
+             + (f" + {r['hyperedges']} hyperedges" if r.get("hyperedges") else "")
              if r.get("concepts") else "")
     print(f"applied {src}: {r['annotated']} rationale, {r['amb_edges']} "
           f"ambiguous edges, {r['communities_named']} communities named"
@@ -752,6 +754,9 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--chunk-files", type=int, default=None, metavar="N",
                    help="--semantic skill: files per chunk for subagent fan-out "
                         "(default 25; 0 = one request file, no fan-out)")
+    e.add_argument("--whisper-model", default="base", metavar="NAME",
+                   help="Whisper model for audio/video transcription "
+                        "(tiny|base|small|medium|large; default base)")
     e.add_argument("--no-docs", action="store_true",
                    help="skip Markdown / reST / AsciiDoc section indexing")
     e.add_argument("--scip", metavar="PATH",

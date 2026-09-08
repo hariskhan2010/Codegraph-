@@ -85,7 +85,7 @@ def _index_doc(db: Db, f, root: Path) -> dict:
     return {"file": f.rel, "error": res.error, **counts}
 
 
-def _index_media(db: Db, f, root: Path) -> dict:
+def _index_media(db: Db, f, root: Path, whisper_model: str = "base") -> dict:
     """Image -> one file node (a vision subagent describes it in the semantic
     pass). Audio/video -> transcribe to Markdown and run the document tier;
     if no Whisper backend is available, a stub node with a hint."""
@@ -95,7 +95,8 @@ def _index_media(db: Db, f, root: Path) -> dict:
         from .config import out_dir
         from .media import transcribe
 
-        got = transcribe(f.abs_path, scratch=out_dir(root) / ".transcribe")
+        got = transcribe(f.abs_path, model=whisper_model,
+                         scratch=out_dir(root) / ".transcribe")
         if got:
             md, backend = got
             res = extract_doc(f.rel, md, ".md")
@@ -138,6 +139,7 @@ def extract(
     scip: str | Path | None = "auto",
     lsp: bool = False,
     semantic_chunk_files: int | None = None,
+    whisper_model: str = "base",
     progress=None,
 ) -> dict:
     """Full build. Re-indexes every code file, then resolves, (optionally)
@@ -183,7 +185,7 @@ def extract(
         if f.file_type in ("document", "paper"):
             r = _index_doc(db, f, root)
         elif f.file_type in _MEDIA_TYPES:
-            r = _index_media(db, f, root)
+            r = _index_media(db, f, root, whisper_model)
         else:
             r = _index_one(db, f, root)
         results.append(r)

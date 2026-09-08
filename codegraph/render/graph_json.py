@@ -107,13 +107,33 @@ def build_graph_json(db: Db) -> dict:
     nodes_out.sort(key=_sort_key)
     links_out.sort(key=_sort_key)
 
+    hyper = []
+    for h in db.conn.execute(
+        "SELECT id, label, relation, confidence, confidence_score, source_file "
+        "FROM hyperedges ORDER BY id"
+    ).fetchall():
+        members = [
+            r["node_id"] for r in db.conn.execute(
+                "SELECT node_id FROM hyperedge_members WHERE hyperedge_id=? "
+                "ORDER BY node_id", (h["id"],)
+            ).fetchall()
+        ]
+        if len(members) >= 2:
+            hyper.append({
+                "id": f"h{h['id']}", "label": h["label"],
+                "relation": h["relation"], "confidence": h["confidence"],
+                "confidence_score": h["confidence_score"],
+                "nodes": [str(m) for m in members],
+                "source_file": h["source_file"],
+            })
+
     data = {
         "directed": True,
         "multigraph": False,
         "graph": {},
         "nodes": nodes_out,
         "links": links_out,
-        "hyperedges": [],
+        "hyperedges": hyper,
     }
     head = db.get_meta("built_at_commit")
     if head:

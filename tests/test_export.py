@@ -30,6 +30,20 @@ def test_export_target_writes_files(db, target):
         assert p.exists()
 
 
+def test_wiki_has_index_and_one_article_per_community(db):
+    (export(Db(db_path(db), create=False), "wiki", db))
+    from codegraph.config import out_dir
+
+    wdir = out_dir(db) / "exports" / "wiki"
+    idx = (wdir / "index.md").read_text()
+    assert idx.startswith("# Graph Wiki")
+    articles = list(wdir.glob("[0-9][0-9][0-9]-*.md"))
+    # every article linked from the index exists on disk
+    for a in articles:
+        assert f"({a.name})" in idx
+        assert (wdir / a.name).read_text().startswith("# ")
+
+
 def test_graphml_is_valid_xml(db):
     x = to_graphml(Db(db_path(db), create=False))
     doc = minidom.parseString(x)

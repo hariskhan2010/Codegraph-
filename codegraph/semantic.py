@@ -347,9 +347,12 @@ _IDEAS_INSTRUCTIONS = (
     "`conceptually_related_to`, `rationale_for` (a decision -> what it governs), "
     "`references`. Every edge: {\"src\",\"dst\",\"relation\","
     "\"confidence\":\"INFERRED\"|\"AMBIGUOUS\",\"confidence_score\":0.55-0.95,"
-    "\"why\":\"<=15 words\"}. Write `" + CHUNK_DIR + "/ideas-response.json` as "
-    "{\"concepts\":[...],\"idea_edges\":[...]}. Be selective: only genuinely "
-    "cross-cutting, non-obvious links."
+    "\"why\":\"<=15 words\"}. (3) `hyperedges` — 2-4 groups of 3+ nodes that "
+    "participate together in one flow or pattern not captured pairwise "
+    "({\"label\", \"members\": [labels], \"relation\": \"participate_in\"|"
+    "\"implements\"|\"forms\"}). Write `" + CHUNK_DIR + "/ideas-response.json` as "
+    "{\"concepts\":[...],\"idea_edges\":[...],\"hyperedges\":[...]}. Be selective: "
+    "only genuinely cross-cutting, non-obvious links."
 )
 
 _DISPATCH_INSTRUCTIONS = (
@@ -541,6 +544,7 @@ def _merge_chunk_responses(cdir: Path) -> dict | None:
             di = json.loads(ideas_file.read_text(encoding="utf-8"))
             out["concepts"] = di.get("concepts") or []
             out["idea_edges"] = di.get("idea_edges") or []
+            out["hyperedges"] = di.get("hyperedges") or []
         except (OSError, ValueError):
             pass
     return out
@@ -594,7 +598,8 @@ def apply_response(db: Db, root: Path, response: dict | str | Path | None = None
     totals["communities_named"] = apply_community_names(
         db, response.get("community_names") or {})
     totals.update(_apply_ideas(db, response.get("concepts") or [],
-                               response.get("idea_edges") or []))
+                               response.get("idea_edges") or [],
+                               response.get("hyperedges") or []))
     totals["merged_chunks"] = merged_chunks
     db.set_meta("semantic_backend", "skill")
     db.set_meta("semantic_at", str(time.time()))
@@ -608,15 +613,22 @@ _IDEA_RELATIONS = {
 }
 
 
-def _apply_ideas(db: Db, concepts: list[dict], idea_edges: list[dict]) -> dict:
+def _apply_ideas(db: Db, concepts: list[dict], idea_edges: list[dict],
+                 hyperedges: list[dict] | None = None) -> dict:
     """Ingest the cross-doc idea graph: concept nodes + the non-structural edges
-    that link ideas to each other and to code. Idempotent — replaces the prior
-    ``origin='semantic'`` concept layer.  All idea edges are ``evidence='llm-idea'``.
+    that link ideas to each other and to code, plus hyperedges. Idempotent —
+    replaces the prior ``origin='semantic'`` concept layer.  All idea edges are
+    ``evidence='llm-idea'``.
     """
     from . import ids as _ids
 
     with db.tx() as c:
         c.execute("DELETE FROM edges WHERE evidence='llm-idea'")
+        c.execute(
+            "DELETE FROM hyperedge_members WHERE hyperedge_id IN "
+            "(SELECT id FROM hyperedges WHERE slug LIKE 'idea:%')"
+        )
+        c.execute("DELETE FROM hyperedges WHERE slug LIKE 'idea:%'")
         c.execute("DELETE FROM nodes WHERE origin='semantic' AND kind='concept'")
 
         # resolver: norm_label -> node id.  Prefer a concept we just made, then a
@@ -686,4 +698,24 @@ def _apply_ideas(db: Db, concepts: list[dict], idea_edges: list[dict]) -> dict:
             )
             if cur.rowcount > 0:
                 linked += 1
-    return {"concepts": made, "idea_edges": linked}
+
+        hyper = 0
+        for h in hyperedges or []:
+            members = [rid(m) for m in (h.get("members") or [])]
+            members = sorted({m for m in members if m is not None})
+            if len(members) < 3:
+                continue
+            label = str(h.get("label") or "").strip()[:120] or "idea group"
+            rel = h.get("relation") or "participate_in"
+            hc = c.execute(
+                "INSERT INTO hyperedges(slug,label,relation,confidence,"
+                "confidence_score,source_file) VALUES(?,?,?,?,?,?)",
+                (f"idea:{_ids.make_slug(label)}", label, rel, "INFERRED", 0.7, None),
+            )
+            hid = int(hc.lastrowid)
+            c.executemany(
+                "INSERT INTO hyperedge_members(hyperedge_id,node_id) VALUES(?,?)",
+                [(hid, m) for m in members],
+            )
+            hyper += 1
+    return {"concepts": made, "idea_edges": linked, "hyperedges": hyper}

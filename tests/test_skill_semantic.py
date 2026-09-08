@@ -142,11 +142,18 @@ def test_ideas_request_written_and_concept_graph_ingested(tmp_path):
              "tags": ["security"]},
             {"label": "Two-Layer Defence", "kind": "concept",
              "anchor_file": "SECURITY.md", "rationale": "defence in depth"},
+            {"label": "Flow", "kind": "concept", "anchor_file": "ARCHITECTURE.md",
+             "rationale": "the request flow"},
         ],
         "idea_edges": [
             {"src": "Two-Layer Defence", "dst": "Tenant Isolation",
              "relation": "semantically_similar_to", "confidence": "INFERRED",
              "confidence_score": 0.85, "why": "same goal, different doc"},
+        ],
+        "hyperedges": [
+            {"label": "Isolation Model",
+             "members": ["Tenant Isolation", "Two-Layer Defence", "Flow"],
+             "relation": "participate_in"},
         ],
     }))
     for k in (1, 2, 3):
@@ -154,7 +161,7 @@ def test_ideas_request_written_and_concept_graph_ingested(tmp_path):
 
     db = Db(db_path(tmp_path), create=False)
     r = apply_response(db, tmp_path, None)
-    assert r["concepts"] == 2 and r["idea_edges"] == 1
+    assert r["concepts"] == 3 and r["idea_edges"] == 1 and r["hyperedges"] == 1
     row = db.conn.execute(
         "SELECT id FROM nodes WHERE label='Tenant Isolation' AND kind='concept'"
     ).fetchone()
@@ -162,8 +169,13 @@ def test_ideas_request_written_and_concept_graph_ingested(tmp_path):
     e = db.conn.execute(
         "SELECT relation, evidence FROM edges WHERE evidence='llm-idea'"
     ).fetchone()
+    h = db.conn.execute(
+        "SELECT h.label, COUNT(*) n FROM hyperedges h "
+        "JOIN hyperedge_members m ON m.hyperedge_id=h.id GROUP BY h.id"
+    ).fetchone()
     db.close()
     assert e["relation"] == "semantically_similar_to"
+    assert h["label"] == "Isolation Model" and h["n"] == 3
 
 
 def test_apply_semantic_reads_response_file(tmp_path):

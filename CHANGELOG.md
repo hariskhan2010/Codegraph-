@@ -6,6 +6,15 @@ version in `pyproject.toml`.
 
 ## 0.7.0 — 2026-09-08
 
+### Added — graphify feature parity: wiki export, hyperedges, `--whisper-model`
+- `codegraph export wiki` — an agent-crawlable wiki (`index.md` + one article
+  per community, members with rationale + the edges leaving the community).
+  graphify's `--wiki`, as a plain deterministic export.
+- The cross-doc idea subagent now also emits `hyperedges` (3+ nodes in one
+  shared flow); `apply-semantic` ingests them, `graph.json` carries them, and
+  the report has a Hyperedges section.
+- `extract --whisper-model tiny|base|small|medium|large` for audio/video.
+
 ### Added — media tier (images, audio, video)
 - Image files become graph nodes; the cross-doc idea subagent Reads each one
   (it has vision) and adds a concept for what it depicts — UI screenshot,

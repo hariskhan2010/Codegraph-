@@ -107,6 +107,26 @@ def build_report(db: Db) -> str:
             add(f"- `codegraph query \"{q}\"`")
         add("")
 
+    hyper = db.conn.execute(
+        "SELECT id, label, relation FROM hyperedges ORDER BY id"
+    ).fetchall()
+    if hyper:
+        add("## Hyperedges (group relationships)")
+        add("")
+        for h in hyper:
+            members = [
+                r["label"] for r in db.conn.execute(
+                    "SELECT n.label FROM hyperedge_members m JOIN nodes n "
+                    "ON n.id=m.node_id WHERE m.hyperedge_id=? ORDER BY n.degree DESC",
+                    (h["id"],)
+                ).fetchall()
+            ]
+            if len(members) >= 3:
+                add(f"- **{h['label']}** ({h['relation']}): "
+                    + ", ".join(members[:8])
+                    + (" …" if len(members) > 8 else ""))
+        add("")
+
     cycles = analysis.get("import_cycles", [])
     if cycles:
         add("## Import Cycles")

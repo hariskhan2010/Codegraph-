@@ -13,6 +13,7 @@ connection, no network) and leaves the hosted-service loaders to Phase 3 plugins
   jsonl              — nodes.jsonl + edges.jsonl (GraphRAG pipelines)
   mermaid            — a ```mermaid``` flowchart (per-community subgraphs)
   obsidian           — a Markdown vault, one note per node, wikilinks for edges
+  wiki               — agent-crawlable wiki: index.md + one article per community
   tree               — plain-text containment outline
 """
 
@@ -29,7 +30,7 @@ from .config import out_dir
 from .db import Db
 
 TARGETS = ("graphml", "gexf", "dot", "cypher", "csv", "jsonl", "mermaid",
-           "obsidian", "tree")
+           "obsidian", "wiki", "tree")
 
 
 def _rows(db: Db):
@@ -308,6 +309,70 @@ def _obsidian_vault(db: Db, root: Path) -> int:
     return len(nodes)
 
 
+def _wiki(db: Db, root: Path) -> int:
+    """An agent-crawlable wiki: ``index.md`` links to one article per community;
+    each article lists members (with their one-line rationale) and the edges
+    that leave the community. graphify's ``--wiki``, as a plain export."""
+    nodes, edges = _rows(db)
+    by_id = {int(r["id"]): r for r in nodes}
+    comm_of = {int(r["id"]): r["community"] for r in nodes}
+    comms = db.conn.execute(
+        "SELECT id, label, cohesion FROM communities ORDER BY id"
+    ).fetchall()
+    sizes: dict = {}
+    for r in nodes:
+        if r["community"] is not None:
+            sizes[r["community"]] = sizes.get(r["community"], 0) + 1
+    root.mkdir(parents=True, exist_ok=True)
+
+    slug = {c["id"]: f"{c['id']:03d}-{_safe(c['label']).replace(' ', '-').lower()}"
+            for c in comms}
+    idx = ["# Graph Wiki", "",
+           f"{len(nodes)} nodes · {len(edges)} edges · {len(comms)} communities",
+           ""]
+    for c in sorted(comms, key=lambda c: -sizes.get(c["id"], 0)):
+        n = sizes.get(c["id"], 0)
+        if n < 3:
+            continue
+        idx.append(f"- [{c['label']}]({slug[c['id']]}.md) — {n} nodes "
+                   f"(cohesion {c['cohesion']:.2f})")
+    (root / "index.md").write_text("\n".join(idx) + "\n", encoding="utf-8")
+
+    written = 1
+    for c in comms:
+        members = [r for r in nodes if r["community"] == c["id"]]
+        if len(members) < 3:
+            continue
+        members.sort(key=lambda r: -(r["degree"] or 0))
+        L = [f"# {c['label']}", "",
+             f"[← index](index.md) · {len(members)} nodes · "
+             f"cohesion {c['cohesion']:.2f}", "", "## Members", ""]
+        for r in members:
+            line = f"- **{r['label']}** (`{r['kind']}`, {r['source_file']})"
+            if r["rationale"]:
+                line += f" — {r['rationale']}"
+            L.append(line)
+        crossing = [
+            e for e in edges
+            if comm_of.get(int(e["src"])) == c["id"]
+            and comm_of.get(int(e["dst"])) != c["id"]
+            and e["relation"] not in ("contains", "method")
+        ]
+        if crossing:
+            L += ["", "## Links out", ""]
+            for e in crossing[:40]:
+                t = by_id[int(e["dst"])]
+                tc = comm_of.get(int(e["dst"]))
+                tgt = (f"[{t['label']}]({slug[tc]}.md)" if tc in slug
+                       else t["label"])
+                L.append(f"- {by_id[int(e['src'])]['label']} "
+                         f"--{e['relation']}--> {tgt}  `[{e['confidence']}]`")
+        (root / f"{slug[c['id']]}.md").write_text("\n".join(L) + "\n",
+                                                  encoding="utf-8")
+        written += 1
+    return written
+
+
 # --------------------------------------------------------------------------- #
 # dispatch
 # --------------------------------------------------------------------------- #
@@ -390,8 +455,13 @@ def export(db: Db, target: str, project_root: Path) -> list[Path]:
         w("edges.jsonl", el)
     elif target == "obsidian":
         vault = exp / "obsidian"
-        n = _obsidian_vault(db, vault)
+        _obsidian_vault(db, vault)
         written.append(vault)
+        return written
+    elif target == "wiki":
+        wdir = exp / "wiki"
+        _wiki(db, wdir)
+        written.append(wdir)
         return written
     else:
         raise ValueError(f"unknown export target: {target}")
