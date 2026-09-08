@@ -105,7 +105,12 @@ CREATE TABLE IF NOT EXISTS raw_refs (
     source_file     TEXT,
     source_location TEXT,
     import_evidence INTEGER DEFAULT 0,
-    lang            TEXT
+    lang            TEXT,
+    is_method       INTEGER DEFAULT 0,      -- receiver present at the call site (x.foo())
+    recv            TEXT,                   -- receiver token ('self', a var name, ...)
+    recv_kind       TEXT,                   -- bare|self|self_attr|name|ctor|complex
+    recv_type       TEXT,                   -- inferred class of the receiver, if known
+    caller_class    TEXT                    -- enclosing class of the call site, if any
 );
 CREATE INDEX IF NOT EXISTS ix_rawrefs_file ON raw_refs(source_file);
 CREATE INDEX IF NOT EXISTS ix_rawrefs_callee ON raw_refs(callee);
@@ -182,7 +187,11 @@ class Db:
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.has_fts = self._init_fts()
-        self._init_schema()
+        try:
+            self._init_schema()
+        except Exception:
+            self.conn.close()  # don't leak the handle (Windows can't unlink it)
+            raise
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -378,12 +387,16 @@ class Db:
                     continue
                 c.execute(
                     "INSERT INTO raw_refs(caller_id,callee,relation,source_file,"
-                    "source_location,import_evidence,lang) VALUES(?,?,?,?,?,?,?)",
+                    "source_location,import_evidence,lang,is_method,recv,recv_kind,"
+                    "recv_type,caller_class) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         caller, rc["callee"], rc.get("relation", "calls"), source_file,
                         rc.get("source_location"),
                         1 if rc.get("import_evidence") else 0,
                         rc.get("lang"),
+                        1 if rc.get("is_method") else 0,
+                        rc.get("recv"), rc.get("recv_kind"), rc.get("recv_type"),
+                        rc.get("caller_class"),
                     ),
                 )
             return {"nodes": len(nodes), "edges": n_edges}
@@ -392,14 +405,23 @@ class Db:
         """Global cross-file resolution from ``raw_refs``.
 
         Idempotent: drops every previously resolved cross-file edge (``evidence``
-        in ``xfile-import`` / ``xfile-infer``) and rebuilds. A callee name with
-        more than one definition of the right kind is left unresolved (graphify's
-        single-definition god-node guard — high precision, deliberately low
-        recall). ``context``/``relation``/``confidence`` follow graphify:
+        in ``xfile-import`` / ``xfile-infer`` / ``xfile-recv``) and rebuilds.
+        High precision, deliberately low recall:
 
-        * ``calls`` with import evidence -> EXTRACTED 1.0, else INFERRED 0.85
-        * ``inherits`` / ``implements`` / ``imports`` -> EXTRACTED 1.0 when the
-          single candidate is found (structural, not a guess)
+        * A callee name with more than one definition of the right kind is left
+          unresolved (the single-definition god-node guard).
+        * A **method call** ``x.foo()`` only resolves when the receiver's class
+          is known — ``self``/``this`` (the caller's own class), a constructor
+          (``Foo().bar()``), a local ``x = Foo()`` binding, or ``Foo.bar()`` —
+          and the single candidate is a method of *that* class. An unknown
+          receiver on a name that is called as a method from several files
+          (``get``, ``execute``, ``run`` …) is never auto-linked — that is what
+          used to manufacture 190-edge "god nodes".
+
+        Confidence: ``calls`` with import evidence -> EXTRACTED 1.0; a
+        receiver-class match -> INFERRED 0.85 (0.95 if also unique + same
+        package); a bare inferred call -> the discrete INFERRED ladder;
+        ``inherits`` / ``implements`` / ``imports`` -> EXTRACTED 1.0.
         """
         _KINDS = {
             "calls": ("function", "method", "class"),
@@ -410,41 +432,105 @@ class Db:
         }
         with self.tx() as c:
             c.execute(
-                "DELETE FROM edges WHERE evidence IN ('xfile-import','xfile-infer')"
+                "DELETE FROM edges WHERE evidence IN "
+                "('xfile-import','xfile-infer','xfile-recv')"
             )
-            index: dict[tuple[str, str], list[tuple[int, str]]] = {}
+            # (kind, name) -> [(id, source_file, class_name_or_None)]
+            index: dict[tuple[str, str], list[tuple[int, str, str | None]]] = {}
             for row in c.execute(
-                "SELECT id, norm_label, kind, source_file FROM nodes"
+                "SELECT id, norm_label, kind, source_file, extra FROM nodes"
             ).fetchall():
                 key = (row["kind"] or "", (row["norm_label"] or "").strip(".()"))
-                if key[1]:
-                    index.setdefault(key, []).append(
-                        (int(row["id"]), row["source_file"])
-                    )
+                if not key[1]:
+                    continue
+                cls = None
+                if row["extra"]:
+                    try:
+                        cls = (json.loads(row["extra"]) or {}).get("cls")
+                    except (ValueError, TypeError):
+                        cls = None
+                index.setdefault(key, []).append(
+                    (int(row["id"]), row["source_file"], _norm_label(cls) if cls else None)
+                )
+
+            # per-file import set (for module-qualified receivers)
+            imports_by_file: dict[str, set[str]] = {}
+            for rc in c.execute(
+                "SELECT source_file, callee FROM raw_refs WHERE relation='imports'"
+            ).fetchall():
+                imports_by_file.setdefault(rc["source_file"], set()).add(
+                    _norm_label(rc["callee"])
+                )
+
+            # fan-in: method-call names referenced from many files with no class
+            # anchor are "popular" and never auto-resolved.
+            fanin: dict[str, set[str]] = {}
+            for rc in c.execute(
+                "SELECT callee, source_file FROM raw_refs "
+                "WHERE relation='calls' AND is_method=1 "
+                "AND (recv_type IS NULL OR recv_type='')"
+            ).fetchall():
+                fanin.setdefault(
+                    _norm_label(rc["callee"]).strip(".()"), set()
+                ).add(rc["source_file"])
+            popular = {k for k, v in fanin.items() if len(v) >= _FANIN_LIMIT}
+            popular |= _ALWAYS_POPULAR
+
             n = 0
             for rc in c.execute("SELECT * FROM raw_refs").fetchall():
                 rel = rc["relation"] or "calls"
+                if rel == "imports":
+                    continue
                 name = _norm_label(rc["callee"]).strip(".()")
-                cands: list[tuple[int, str]] = []
+                if not name:
+                    continue
+                raw_cands: list[tuple[int, str, str | None]] = []
                 for k in _KINDS.get(rel, ("function", "method", "class")):
-                    cands += index.get((k, name), [])
-                total_before = len({nid for nid, _ in cands})
-                cands = [(nid, sf) for nid, sf in cands if sf != rc["source_file"]]
-                # dedupe
-                cands = list({nid: (nid, sf) for nid, sf in cands}.values())
+                    raw_cands += index.get((k, name), [])
+                total_before = len({nid for nid, _, _ in raw_cands})
+                cands = [t for t in raw_cands if t[1] != rc["source_file"]]
+                cands = list({t[0]: t for t in cands}.values())
+                if not cands:
+                    continue
+
+                recv_match = False
+                if rel == "calls" and rc["is_method"]:
+                    rkind = rc["recv_kind"] or ""
+                    rtype = _norm_label(rc["recv_type"]) if rc["recv_type"] else None
+                    if rtype:
+                        by_cls = [t for t in cands if t[2] == rtype]
+                        if not by_cls:
+                            continue
+                        cands, recv_match = by_cls, True
+                    elif rkind in ("name", "complex", "self_attr") and not rc["import_evidence"]:
+                        # unknown receiver: only a rare, unambiguous name survives
+                        if name in popular:
+                            continue
+                    # (a bare `self`/`this` with no caller_class falls through to
+                    #  the single-candidate guard below)
+                elif rel == "calls" and not rc["is_method"]:
+                    if name in popular and not rc["import_evidence"]:
+                        continue
+
                 if len(cands) != 1:
                     continue
-                dst, dst_file = cands[0]
+                dst, dst_file, _ = cands[0]
                 if dst == rc["caller_id"]:
                     continue
+
                 if rel == "calls":
+                    same_root = (rc["source_file"].split("/")[0]
+                                 == (dst_file or "").split("/")[0])
                     if rc["import_evidence"]:
                         conf, score, ev = "EXTRACTED", 1.0, "xfile-import"
+                    elif recv_match:
+                        conf, ev = "INFERRED", "xfile-recv"
+                        score = 0.95 if (total_before == 1 and same_root) else 0.85
+                    elif rc["is_method"]:
+                        # method call, receiver class unknown — a guess, say so
+                        conf, ev, score = "INFERRED", "xfile-infer", 0.65
                     else:
-                        # discrete INFERRED ladder by signal strength (PLAN §8)
                         conf, ev = "INFERRED", "xfile-infer"
-                        same_root = (rc["source_file"].split("/")[0]
-                                     == (dst_file or "").split("/")[0])
                         score = _infer_score(
                             unique_globally=(total_before == 1),
                             same_package=same_root,
@@ -542,6 +628,24 @@ class Db:
 
 _NO_SELF = {"imports", "imports_from", "re_exports"}
 _CONF_DEFAULT = {"EXTRACTED": 1.0, "INFERRED": 0.55, "AMBIGUOUS": 0.2}
+
+# A method-call name referenced (with an unknown receiver) from at least this
+# many distinct files is treated as too common to auto-resolve to its lone
+# definition. Tuned low: precision over recall.
+_FANIN_LIMIT = 4
+
+# Method names that are common across ecosystems — never auto-link `x.<name>()`
+# to a sole same-named definition without receiver-type or import evidence.
+_ALWAYS_POPULAR = {
+    "get", "set", "run", "execute", "call", "apply", "close", "open", "send",
+    "recv", "read", "write", "flush", "load", "save", "dump", "dumps", "loads",
+    "parse", "format", "build", "make", "create", "update", "delete", "remove",
+    "add", "insert", "append", "extend", "pop", "clear", "copy", "start", "stop",
+    "check", "validate", "init", "setup", "reset", "next", "value", "values",
+    "keys", "items", "name", "id", "handle", "process", "resolve", "connect",
+    "commit", "rollback", "query", "fetch", "fetchone", "fetchall", "exists",
+    "to_dict", "from_dict", "json", "text", "encode", "decode", "hash",
+}
 
 # graphify's extraction spec: INFERRED confidence is one of a discrete ladder, not
 # a continuous value (models otherwise collapse the range to bimodal 0.5/0.85).

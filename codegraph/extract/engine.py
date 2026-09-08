@@ -46,6 +46,122 @@ def _loc(node: Node) -> str:
     return f"L{a}" if a == b else f"L{a}-L{b}"
 
 
+# tree-sitter node types, across the 20 grammars, that mean "a.b" / "a::b" / "a->b"
+# — i.e. the captured callee has a *receiver*. Used to tell `session.execute()`
+# apart from a bare `execute()` without touching any per-language query.
+_MEMBER_ACCESS_TYPES = frozenset({
+    "attribute", "member_expression", "member_access_expression",
+    "selector_expression", "field_expression", "field_access",
+    "navigation_expression", "navigation_suffix",
+    "member_call_expression", "scoped_call_expression", "scoped_identifier",
+    "qualified_identifier", "call_expression_statement",
+    "dot_index_expression", "method_index_expression",
+})
+_CALL_TYPES = frozenset({
+    "call", "call_expression", "method_invocation", "method_call",
+    "function_call", "function_call_expression", "invocation_expression",
+    "command", "macro_invocation",
+})
+# receiver tokens that mean "the current instance" — a call on one of these
+# resolves against the caller's own class, which is high precision.
+_SELF_NAMES = frozenset({"self", "this", "cls", "me", "super", "_self"})
+
+_BIND_RE = None  # compiled lazily in _class_bindings
+
+
+def _ident_text(n: Node) -> str | None:
+    """Text of an identifier-ish leaf, else None."""
+    if n.type in (
+        "identifier", "simple_identifier", "field_identifier", "property_identifier",
+        "type_identifier", "shorthand_property_identifier", "name", "constant",
+        "variable_name", "word",
+    ):
+        return n.text.decode("utf-8", "replace").lstrip("$@&")
+    return None
+
+
+def _receiver_of(callee: Node) -> tuple[str | None, str]:
+    """Classify the call whose method name is ``callee``.
+
+    Returns ``(receiver_name, kind)`` where kind is one of:
+      ``bare``   — ``foo()``            (no receiver)
+      ``self``   — ``self.foo()`` / ``this.foo()``
+      ``name``   — ``x.foo()``          (receiver is a single identifier ``x``)
+      ``ctor``   — ``Foo().bar()``      (receiver is a constructor call)
+      ``complex``— ``a.b.foo()`` etc.   (receiver is a non-trivial expression)
+    """
+    p = callee.parent
+    hops = 0
+    while p is not None and hops < 5:
+        t = p.type
+        if t in _CALL_TYPES:
+            # reached the call with no member-access wrapper on the way up
+            recv = p.child_by_field_name("receiver") or p.child_by_field_name("object")
+            if recv is None:
+                return None, "bare"
+            p = recv
+            break
+        if t in _MEMBER_ACCESS_TYPES:
+            recv = None
+            for fld in ("object", "receiver", "value", "operand", "argument", "scope"):
+                r = p.child_by_field_name(fld)
+                if r is not None and r.id != callee.id and callee.start_byte >= r.end_byte:
+                    recv = r
+                    break
+            if recv is None:
+                for ch in p.named_children:
+                    if ch.id != callee.id and ch.end_byte <= callee.start_byte:
+                        recv = ch
+                        break
+            if recv is None:
+                p = p.parent
+                hops += 1
+                continue
+            p = recv
+            break
+        p = p.parent
+        hops += 1
+    else:
+        return None, "bare"
+    if p is None:
+        return None, "bare"
+
+    # p is now the receiver expression
+    name = _ident_text(p)
+    if name is not None:
+        return name, ("self" if name.lower() in _SELF_NAMES else "name")
+    if p.type in _CALL_TYPES:
+        fn = p.child_by_field_name("function") or p.child_by_field_name("name")
+        cn = _ident_text(fn) if fn is not None else None
+        if cn and cn[:1].isupper():
+            return cn, "ctor"
+        return None, "complex"
+    # self.attr.foo() — still anchored to the instance, but not to a known class
+    first = _ident_text(p.named_children[0]) if p.named_children else None
+    if first and first.lower() in _SELF_NAMES:
+        return first, "self_attr"
+    return None, "complex"
+
+
+def _class_bindings(text: str) -> dict[str, str]:
+    """Best-effort ``local_var -> ClassName`` map from ``x = Foo(...)`` /
+    ``x = new Foo(...)`` / ``x := Foo{...}`` inside one function body. High
+    precision: the RHS must start with an uppercase identifier."""
+    import re
+
+    global _BIND_RE
+    if _BIND_RE is None:
+        _BIND_RE = re.compile(
+            r"(?:^|[;\n{(,])\s*(?:const |let |var |val |my |\$)?"
+            r"(\$?[A-Za-z_]\w*)\s*(?::?=|:=)\s*(?:new\s+|await\s+|& )?"
+            r"([A-Z]\w*)\s*[({]"
+        )
+    out: dict[str, str] = {}
+    for m in _BIND_RE.finditer(text):
+        out.setdefault(m.group(1).lstrip("$"), m.group(2))
+    return out
+
+
 _HTTP_VERBS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 
 
@@ -175,13 +291,23 @@ def extract_file(rel: str, src: bytes, lang: str) -> FileResult:
 
     route = _route_prefix(rel)
     same_file_defs: dict[str, _Def] = {}
+    # (class name) -> {method name -> _Def}, and the set of class names in this file
+    methods_by_class: dict[str, dict[str, _Def]] = {}
+    class_names: set[str] = set()
+    for d in defs:
+        if d.is_class:
+            class_names.add(d.name)
+        elif d.parent is not None and d.parent.is_class:
+            methods_by_class.setdefault(d.parent.name, {}).setdefault(d.name, d)
     for d in defs:
         parent_is_class = d.parent is not None and d.parent.is_class
         kind = "class" if d.is_class else ("method" if parent_is_class else "function")
+        extra: dict | None = None
         if d.is_class:
             label = d.name
         elif parent_is_class:
             label = f".{d.name}()"
+            extra = {"cls": d.parent.name}
         elif route and d.parent is None and d.name.upper() in _HTTP_VERBS:
             # Next.js / framework route handler: disambiguate `POST` by its path
             label = f"{d.name.upper()} {route}"
@@ -191,10 +317,13 @@ def extract_file(rel: str, src: bytes, lang: str) -> FileResult:
             kind = "route"
         else:
             label = f"{d.name}()"
-        res.nodes.append({
+        node = {
             "slug": d.slug, "label": label, "kind": kind,
             "file_type": "code", "source_location": _loc(d.node),
-        })
+        }
+        if extra:
+            node["extra"] = extra
+        res.nodes.append(node)
         same_file_defs.setdefault(d.name, d)
 
         parent_slug = d.parent.slug if d.parent else file_slug
@@ -246,6 +375,18 @@ def extract_file(rel: str, src: bytes, lang: str) -> FileResult:
             })
 
     # ---- calls ----------------------------------------------------------
+    _bind_cache: dict[int, dict[str, str]] = {}
+
+    def _bindings_for(enc: _Def | None) -> dict[str, str]:
+        if enc is None:
+            return {}
+        key = id(enc)
+        if key not in _bind_cache:
+            _bind_cache[key] = _class_bindings(
+                src[enc.start:enc.end].decode("utf-8", "replace")
+            )
+        return _bind_cache[key]
+
     for caps in _matches(lang, "calls", root):
         callee = (caps.get("callee") or [None])[0]
         if callee is None:
@@ -255,19 +396,57 @@ def extract_file(rel: str, src: bytes, lang: str) -> FileResult:
             continue
         enc = enclosing(callee.start_byte, callee.start_byte + 1)
         caller_slug = enc.slug if enc else file_slug
-        local = same_file_defs.get(name)
-        if local and local.slug != caller_slug:
+        loc = f"L{callee.start_point[0] + 1}"
+
+        recv_name, recv_kind = _receiver_of(callee)
+        caller_class: str | None = None
+        if enc is not None:
+            if enc.is_class:
+                caller_class = enc.name
+            elif enc.parent is not None and enc.parent.is_class:
+                caller_class = enc.parent.name
+
+        # infer the receiver's class where we safely can
+        recv_type: str | None = None
+        if recv_kind in ("self", "self_attr"):
+            recv_type = caller_class
+        elif recv_kind == "ctor":
+            recv_type = recv_name
+        elif recv_kind == "name" and recv_name:
+            recv_type = _bindings_for(enc).get(recv_name)
+            if recv_type is None and recv_name in class_names:
+                recv_type = recv_name  # ClassName.static() / ClassName().x
+
+        is_method = recv_kind != "bare"
+
+        # -- same-file resolution ----------------------------------------
+        # self / bare: the historical single-name match (safe, in-file).
+        # x.foo() with a known receiver class: match that class's method only.
+        local: _Def | None = None
+        if recv_kind in ("self", "self_attr") and caller_class:
+            local = methods_by_class.get(caller_class, {}).get(name)
+        if local is None and recv_kind in ("bare", "self", "self_attr"):
+            local = same_file_defs.get(name)
+        elif local is None and recv_type:
+            local = methods_by_class.get(recv_type, {}).get(name)
+
+        if local is not None and local.slug != caller_slug:
             res.edges.append({
                 "src_slug": caller_slug, "dst_slug": local.slug, "relation": "calls",
                 "confidence": "EXTRACTED", "confidence_score": 1.0, "context": "call",
-                "source_location": f"L{callee.start_point[0] + 1}", "evidence": "same-file",
+                "source_location": loc, "evidence": "same-file",
             })
-        elif not local:
-            res.raw_refs.append({
-                "caller_slug": caller_slug, "callee": name, "relation": "calls",
-                "source_location": f"L{callee.start_point[0] + 1}",
-                "import_evidence": name in imported, "lang": lang,
-            })
+            continue
+        if local is not None:
+            continue  # resolved to the caller itself (recursion) — skip
+
+        res.raw_refs.append({
+            "caller_slug": caller_slug, "callee": name, "relation": "calls",
+            "source_location": loc, "import_evidence": name in imported,
+            "lang": lang, "is_method": is_method, "recv": recv_name,
+            "recv_kind": recv_kind, "recv_type": recv_type,
+            "caller_class": caller_class,
+        })
 
     return res
 

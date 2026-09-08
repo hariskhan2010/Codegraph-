@@ -4,6 +4,27 @@ All notable changes to codegraph. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the package
 version in `pyproject.toml`.
 
+## 0.7.0 — 2026-09-08
+
+### Changed — receiver-aware call resolution (accuracy)
+- **Schema v2.** `raw_refs` now records the call site's receiver (`is_method`,
+  `recv`, `recv_kind`, `recv_type`, `caller_class`). The extractor derives this
+  from the AST parent of the captured callee — no per-language query changes.
+- `resolve_calls` no longer collapses every `x.method()` onto the one global
+  `method()` definition. A **method call** resolves only when the receiver's
+  class is known — `self`/`this` (the caller's class), a constructor
+  (`Foo().bar()`), a local `x = Foo()` binding, or `Foo.bar()` — and the sole
+  candidate is a method of that class (`INFERRED` 0.85, `evidence='xfile-recv'`).
+- **Fan-in guard.** A method name called with an unknown receiver from ≥4 files,
+  or in a built-in popular set (`get`, `execute`, `run`, `save`, …), is never
+  auto-linked. On the SEO reference repo this cut the top "god node" from
+  190 bogus edges (`get()`) to 0, and moved edge provenance from 85 % to 96 %
+  `EXTRACTED`.
+- `analyze.surprising_connections` drops weak (`<0.8`) INFERRED call edges — they
+  were resolver guesses, not insights.
+- `codegraph extract` now rebuilds automatically on a schema-version bump
+  instead of dead-ending with "re-run extract --force".
+
 ## 0.6.0 — 2026-09-08
 
 ### Added — npm install path

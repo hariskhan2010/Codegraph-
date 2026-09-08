@@ -63,6 +63,23 @@ def test_inferred_edges_are_on_the_ladder(tmp_path):
     assert all(s in (0.55, 0.65, 0.75, 0.85, 0.95) for s in inferred)
 
 
+def test_extract_recovers_from_a_schema_bump(tmp_path):
+    (tmp_path / "a.py").write_text("def f():\n    return 1\n")
+    extract(tmp_path, semantic="none", scip="none")
+
+    from codegraph.config import db_path
+    from codegraph.db import Db
+
+    db = Db(db_path(tmp_path), create=False)
+    db.set_meta("schema_version", "0")  # simulate a graph from an older codegraph
+    db.conn.commit()
+    db.close()
+
+    # must not dead-end with "re-run extract --force" — it should just rebuild
+    st = extract(tmp_path, semantic="none", scip="none")
+    assert st["nodes"] >= 2
+
+
 def test_backup_on_write_when_graph_is_protected(tmp_path, monkeypatch):
     (tmp_path / "a.py").write_text("def f():\n    return g()\n\ndef g():\n    return 1\n")
 

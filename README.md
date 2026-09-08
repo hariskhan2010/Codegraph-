@@ -114,11 +114,11 @@ Scriptable: `codegraph install --agent gemini --agent codex --scope global`.
 
 ### Sharing it with someone
 
-Send them `dist/code_graph-0.6.0-py3-none-any.whl` (build it with `python -m build`).
+Send them `dist/code_graph-0.7.0-py3-none-any.whl` (build it with `python -m build`).
 They run:
 
 ```bash
-pip install code_graph-0.6.0-py3-none-any.whl   # needs Python 3.11+
+pip install code_graph-0.7.0-py3-none-any.whl   # needs Python 3.11+
 codegraph setup                                  # wires every agent they have
 ```
 

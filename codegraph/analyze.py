@@ -60,6 +60,12 @@ def surprising_connections(db: Db, top_n: int = 8) -> list[dict]:
     for e in db.edges():
         if e["relation"] in ("contains", "method", "imports", "imports_from"):
             continue
+        # a weak INFERRED cross-file call is a resolver guess, not an insight —
+        # keep only strong inferences and the LLM's duck-typed AMBIGUOUS edges.
+        if (e["relation"] in ("calls", "references")
+                and e["confidence"] == "INFERRED"
+                and (e["confidence_score"] or 0) < 0.8):
+            continue
         s, d = by_id.get(int(e["src"])), by_id.get(int(e["dst"]))
         if not s or not d:
             continue

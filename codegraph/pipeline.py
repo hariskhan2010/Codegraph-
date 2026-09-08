@@ -102,7 +102,18 @@ def extract(
     """
     root = Path(root).resolve()
     out_dir(root).mkdir(parents=True, exist_ok=True)
-    db = Db(db_path(root))
+    try:
+        db = Db(db_path(root))
+    except RuntimeError as e:
+        if "schema" not in str(e).lower():
+            raise
+        # a schema bump can't be migrated in place — a full rebuild is the
+        # documented fix, so honour it here instead of dead-ending the user.
+        p = db_path(root)
+        for suffix in ("", "-wal", "-shm"):
+            Path(str(p) + suffix).unlink(missing_ok=True)
+        force = True
+        db = Db(p)
     backed_up = _backup_if_protected(db, root)
     db.set_meta("root", root.as_posix())
     db.set_meta("codegraph_version", __version__)
