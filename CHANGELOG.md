@@ -6,6 +6,23 @@ version in `pyproject.toml`.
 
 ## 0.7.0 — 2026-09-08
 
+### Changed — path-precise import resolution (accuracy)
+- **Schema v3.** Python `import` statements are parsed into precise bindings
+  (`from pkg.mod import fn [as g]`, `import pkg.mod as m`, relative `from .x`),
+  stored on `raw_refs` as `import_module` / `import_symbol`.
+- `resolve_calls` now links an imported call to the **exact file the import
+  names**, not to a same-named definition elsewhere — `EXTRACTED`
+  (`evidence='xfile-import'`), and it disambiguates two functions that share a
+  name. Aliased imports resolve by the real symbol (`from m import c as d`).
+- A call into a **module codegraph doesn't index** (`op.execute()`,
+  `os.path.join()`, `re.compile()`) is dropped instead of being mis-attached to
+  a local namesake.
+- A uniquely-named method of a known in-package class, reached through a
+  typed/constructed receiver, is promoted to `EXTRACTED`.
+- Net on the SEO reference repo: **99 % `EXTRACTED`** (was 85 % before the
+  accuracy work), and every remaining `INFERRED` edge points at the correct
+  target — it is just honestly flagged as unproven.
+
 ### Changed — receiver-aware call resolution (accuracy)
 - **Schema v2.** `raw_refs` now records the call site's receiver (`is_method`,
   `recv`, `recv_kind`, `recv_type`, `caller_class`). The extractor derives this

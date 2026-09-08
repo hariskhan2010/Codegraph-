@@ -108,9 +108,11 @@ CREATE TABLE IF NOT EXISTS raw_refs (
     lang            TEXT,
     is_method       INTEGER DEFAULT 0,      -- receiver present at the call site (x.foo())
     recv            TEXT,                   -- receiver token ('self', a var name, ...)
-    recv_kind       TEXT,                   -- bare|self|self_attr|name|ctor|complex
+    recv_kind       TEXT,                   -- bare|self|self_attr|name|ctor|complex|dotted
     recv_type       TEXT,                   -- inferred class of the receiver, if known
-    caller_class    TEXT                    -- enclosing class of the call site, if any
+    caller_class    TEXT,                   -- enclosing class of the call site, if any
+    import_module   TEXT,                   -- posix path fragment the callee is imported from
+    import_symbol   TEXT                    -- the symbol name in that module
 );
 CREATE INDEX IF NOT EXISTS ix_rawrefs_file ON raw_refs(source_file);
 CREATE INDEX IF NOT EXISTS ix_rawrefs_callee ON raw_refs(callee);
@@ -388,7 +390,8 @@ class Db:
                 c.execute(
                     "INSERT INTO raw_refs(caller_id,callee,relation,source_file,"
                     "source_location,import_evidence,lang,is_method,recv,recv_kind,"
-                    "recv_type,caller_class) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "recv_type,caller_class,import_module,import_symbol) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         caller, rc["callee"], rc.get("relation", "calls"), source_file,
                         rc.get("source_location"),
@@ -397,6 +400,7 @@ class Db:
                         1 if rc.get("is_method") else 0,
                         rc.get("recv"), rc.get("recv_kind"), rc.get("recv_type"),
                         rc.get("caller_class"),
+                        rc.get("import_module"), rc.get("import_symbol"),
                     ),
                 )
             return {"nodes": len(nodes), "edges": n_edges}
@@ -418,10 +422,17 @@ class Db:
           (``get``, ``execute``, ``run`` …) is never auto-linked — that is what
           used to manufacture 190-edge "god nodes".
 
-        Confidence: ``calls`` with import evidence -> EXTRACTED 1.0; a
-        receiver-class match -> INFERRED 0.85 (0.95 if also unique + same
-        package); a bare inferred call -> the discrete INFERRED ladder;
-        ``inherits`` / ``implements`` / ``imports`` -> EXTRACTED 1.0.
+        * The import table pins the callee to a module. A call resolves to the
+          **exact file that import names** (``xfile-import`` EXTRACTED), even
+          when two files define the name; a call into a module codegraph does
+          not index (``op.execute``, ``os.path.join``) is dropped, not attached
+          to a local namesake.
+
+        Confidence: an import-pinned or name-imported call -> EXTRACTED 1.0; a
+        unique in-package method via a typed receiver -> EXTRACTED 1.0; a weaker
+        receiver-class match -> INFERRED 0.85; a bare inferred call -> the
+        discrete INFERRED ladder; ``inherits`` / ``implements`` / ``imports`` ->
+        EXTRACTED 1.0.
         """
         _KINDS = {
             "calls": ("function", "method", "class"),
@@ -452,6 +463,12 @@ class Db:
                 index.setdefault(key, []).append(
                     (int(row["id"]), row["source_file"], _norm_label(cls) if cls else None)
                 )
+
+            all_source_files = {
+                r["source_file"] for r in c.execute(
+                    "SELECT DISTINCT source_file FROM nodes WHERE source_file IS NOT NULL"
+                ).fetchall()
+            }
 
             # per-file import set (for module-qualified receivers)
             imports_by_file: dict[str, set[str]] = {}
@@ -484,32 +501,53 @@ class Db:
                 name = _norm_label(rc["callee"]).strip(".()")
                 if not name:
                     continue
+                # an aliased import (`from m import c as d`) is called as `d` but
+                # the definition is named `c` — look candidates up by the real name
+                lookup = name
+                if rc["import_symbol"]:
+                    lookup = _norm_label(rc["import_symbol"]).strip(".()") or name
                 raw_cands: list[tuple[int, str, str | None]] = []
                 for k in _KINDS.get(rel, ("function", "method", "class")):
-                    raw_cands += index.get((k, name), [])
+                    raw_cands += index.get((k, lookup), [])
                 total_before = len({nid for nid, _, _ in raw_cands})
                 cands = [t for t in raw_cands if t[1] != rc["source_file"]]
                 cands = list({t[0]: t for t in cands}.values())
                 if not cands:
                     continue
 
+                # import table says exactly which module the callee comes from
+                mod_match = False
+                if rc["import_module"]:
+                    want = rc["import_module"].strip("/").lower()
+                    narrowed = [t for t in cands if _stem_matches(t[1], want)]
+                    if len(narrowed) == 1:
+                        cands, mod_match = narrowed, True
+                    elif len(narrowed) > 1:
+                        cands = narrowed
+                    elif not any(_stem_matches(f, want) for f in all_source_files):
+                        # the callee is imported from a module we don't index
+                        # (`op.execute`, `os.path.join`, `re.compile`) — external,
+                        # never link it to a same-named local definition
+                        continue
+                    # else: named module is indexed but lacks the symbol -> a
+                    # re-export; fall through to the normal guards
+
                 recv_match = False
                 if rel == "calls" and rc["is_method"]:
-                    rkind = rc["recv_kind"] or ""
                     rtype = _norm_label(rc["recv_type"]) if rc["recv_type"] else None
                     if rtype:
                         by_cls = [t for t in cands if t[2] == rtype]
                         if not by_cls:
                             continue
                         cands, recv_match = by_cls, True
-                    elif rkind in ("name", "complex", "self_attr") and not rc["import_evidence"]:
-                        # unknown receiver: only a rare, unambiguous name survives
-                        if name in popular:
-                            continue
-                    # (a bare `self`/`this` with no caller_class falls through to
-                    #  the single-candidate guard below)
+                    elif name in popular and not (mod_match or rc["import_evidence"]):
+                        # unknown receiver on a common method name (`x.get()`,
+                        # `req.headers.get()`, `conn.execute()`) — never a guess
+                        continue
+                    # a rare unknown-receiver name falls through to the
+                    # single-candidate guard below at low confidence
                 elif rel == "calls" and not rc["is_method"]:
-                    if name in popular and not rc["import_evidence"]:
+                    if name in popular and not (mod_match or rc["import_evidence"]):
                         continue
 
                 if len(cands) != 1:
@@ -521,11 +559,19 @@ class Db:
                 if rel == "calls":
                     same_root = (rc["source_file"].split("/")[0]
                                  == (dst_file or "").split("/")[0])
-                    if rc["import_evidence"]:
+                    if mod_match:
+                        # the import statement names this exact file — proven
                         conf, score, ev = "EXTRACTED", 1.0, "xfile-import"
+                    elif rc["import_evidence"]:
+                        conf, score, ev = "EXTRACTED", 1.0, "xfile-import"
+                    elif recv_match and total_before == 1 and same_root:
+                        # a uniquely-named method of a known in-package class,
+                        # reached through a typed/constructed receiver — as solid
+                        # as an import call
+                        conf, score, ev = "EXTRACTED", 1.0, "xfile-recv"
                     elif recv_match:
                         conf, ev = "INFERRED", "xfile-recv"
-                        score = 0.95 if (total_before == 1 and same_root) else 0.85
+                        score = 0.85
                     elif rc["is_method"]:
                         # method call, receiver class unknown — a guess, say so
                         conf, ev, score = "INFERRED", "xfile-infer", 0.65
@@ -671,3 +717,28 @@ def _norm_label(label: str) -> str:
     import unicodedata
 
     return unicodedata.normalize("NFKD", label or "").encode("ascii", "ignore").decode().lower()
+
+
+_SRC_SUFFIXES = (
+    ".pyi", ".py", ".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".go", ".rb",
+    ".rs", ".java", ".kt", ".php", ".scala", ".cs", ".swift", ".c", ".cc",
+    ".cpp", ".h", ".hpp", ".lua",
+)
+
+
+def _stem_matches(source_file: str | None, want: str) -> bool:
+    """True if ``source_file`` is the module ``want`` (a posix path fragment).
+
+    ``.../packages/seo_core/validation.py`` matches ``seo_core/validation`` and
+    ``.../seo_core/pkg/__init__.py`` matches ``seo_core/pkg``.
+    """
+    if not source_file or not want:
+        return False
+    s = source_file.lower()
+    for suf in _SRC_SUFFIXES:
+        if s.endswith(suf):
+            s = s[: -len(suf)]
+            break
+    if s.endswith("/__init__") or s.endswith("/index") or s.endswith("/mod"):
+        s = s.rsplit("/", 1)[0]
+    return s == want or s.endswith("/" + want)

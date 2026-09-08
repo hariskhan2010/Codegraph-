@@ -33,6 +33,8 @@ class LangConfig:
     func_node_types: tuple[str, ...] = ()
     supers: Callable[[Node], list[str]] | None = None
     import_names: Callable[[Node, bytes], list[str]] | None = None
+    # optional precise binding info: (bound_name, dotted_module, symbol_or_None)
+    import_specs: Callable[[Node, bytes], list["ImportSpec"]] | None = None
     family: str = ""
 
 
@@ -76,6 +78,60 @@ def _py_imports(node: Node, src: bytes) -> list[str]:
                 if nm:
                     names.append(_txt(nm, src).split(".")[-1])
     return [n for n in names if n]
+
+
+# (bound_name, dotted_module, symbol_or_None). symbol=None => `bound` names a
+# module, so `bound.f()` is a module-qualified call into `dotted_module`.
+ImportSpec = tuple[str, str, str | None]
+
+
+def _py_import_specs(node: Node, src: bytes) -> list[ImportSpec]:
+    """Precise Python import bindings for path-aware call resolution.
+
+    ``from pkg.mod import fn``        -> ("fn",  "pkg.mod", "fn")
+    ``from pkg.mod import fn as g``   -> ("g",   "pkg.mod", "fn")
+    ``from . import mod``             -> ("mod", ".",       None)
+    ``from .sub import fn``           -> ("fn",  ".sub",     "fn")
+    ``import pkg.mod as m``           -> ("m",   "pkg.mod",  None)
+    ``import pkg``                    -> ("pkg", "pkg",      None)
+    """
+    out: list[ImportSpec] = []
+    if node.type == "import_statement":
+        for ch in node.named_children:
+            if ch.type == "dotted_name":
+                dotted = _txt(ch, src)
+                out.append((dotted, dotted, None))
+                head = dotted.split(".")[0]
+                if head != dotted:
+                    out.append((head, head, None))
+            elif ch.type == "aliased_import":
+                nm = ch.child_by_field_name("name")
+                al = ch.child_by_field_name("alias")
+                if nm and al:
+                    out.append((_txt(al, src), _txt(nm, src), None))
+    elif node.type == "import_from_statement":
+        mod_node = node.child_by_field_name("module_name")
+        module = _txt(mod_node, src) if mod_node else ""
+        # relative import: module_name may be just dots, or dots + name
+        if mod_node is not None and mod_node.type == "relative_import":
+            module = _txt(mod_node, src)
+        names = [c for c in node.named_children if c is not mod_node]
+        for ch in names:
+            if ch.type == "dotted_name":
+                sym = _txt(ch, src).split(".")[-1]
+                if module in ("", ".") or module.endswith("."):
+                    # `from . import sub` / `from .. import sub` -> sub is a module
+                    out.append((sym, (module + sym).replace("..", "."), None)
+                               if module else (sym, sym, None))
+                else:
+                    out.append((sym, module, sym))
+            elif ch.type == "aliased_import":
+                nm = ch.child_by_field_name("name")
+                al = ch.child_by_field_name("alias")
+                if nm and al:
+                    out.append((_txt(al, src), module or _txt(nm, src),
+                                _txt(nm, src)))
+    return [(b, m, s) for (b, m, s) in out if b and m]
 
 
 def _generic_supers_field(field_names: tuple[str, ...]):
@@ -181,7 +237,7 @@ _PY = LangConfig(
     imports_query="(import_statement) @import (import_from_statement) @import",
     class_node_types=("class_definition",),
     func_node_types=("function_definition",),
-    supers=_py_supers, import_names=_py_imports,
+    supers=_py_supers, import_names=_py_imports, import_specs=_py_import_specs,
 )
 
 _JS = LangConfig(

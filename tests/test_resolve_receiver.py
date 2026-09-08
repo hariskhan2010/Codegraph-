@@ -116,6 +116,61 @@ def test_untyped_receiver_popular_name_is_dropped(tmp_path):
                    if s == "go()"), _calls(tmp_path)
 
 
+def test_from_import_resolves_to_the_named_module_not_a_namesake(tmp_path):
+    (tmp_path / "store.py").write_text("def persist(x):\n    return x\n")
+    (tmp_path / "cache.py").write_text("def persist(x):\n    return x\n")
+    (tmp_path / "app.py").write_text(
+        "from store import persist\n"
+        "def run(x):\n    return persist(x)\n"
+    )
+    extract(tmp_path, semantic="none", scip="none")
+    hits = [(d, c, ev) for s, d, c, ev in _calls(tmp_path) if s == "run()"]
+    assert hits == [("persist()", "EXTRACTED", "xfile-import")]
+    # and it points at store.py, not cache.py
+    db = Db(db_path(tmp_path), create=False)
+    by_id = {int(r["id"]): r for r in db.nodes()}
+    tgt = [by_id[int(e["dst"])]["source_file"] for e in db.edges()
+           if e["relation"] == "calls" and by_id[int(e["src"])]["label"] == "run()"]
+    db.close()
+    assert tgt == ["store.py"]
+
+
+def test_module_alias_call_resolves(tmp_path):
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("")
+    (tmp_path / "pkg" / "svc.py").write_text("def dispatch(x):\n    return x\n")
+    (tmp_path / "app.py").write_text(
+        "import pkg.svc as svc\n"
+        "def run(x):\n    return svc.dispatch(x)\n"
+    )
+    extract(tmp_path, semantic="none", scip="none")
+    assert any(s == "run()" and d == "dispatch()" and c == "EXTRACTED"
+               for s, d, c, ev in _calls(tmp_path)), _calls(tmp_path)
+
+
+def test_external_module_call_is_never_linked_to_a_namesake(tmp_path):
+    # a local function named `execute` must not absorb every `op.execute(...)`
+    (tmp_path / "job.py").write_text("def execute(spec):\n    return spec\n")
+    (tmp_path / "migration.py").write_text(
+        "from alembic import op\n"
+        "def upgrade():\n    op.execute('CREATE TABLE t (id int)')\n"
+    )
+    extract(tmp_path, semantic="none", scip="none")
+    assert not any(d == "execute()" for s, d, *_ in _calls(tmp_path)
+                   if s == "upgrade()"), _calls(tmp_path)
+
+
+def test_aliased_import_resolves_by_real_symbol_name(tmp_path):
+    (tmp_path / "util.py").write_text("def normalize(s):\n    return s.strip()\n")
+    (tmp_path / "app.py").write_text(
+        "from util import normalize as norm\n"
+        "def run(s):\n    return norm(s)\n"
+    )
+    extract(tmp_path, semantic="none", scip="none")
+    assert any(s == "run()" and d == "normalize()" and c == "EXTRACTED"
+               for s, d, c, ev in _calls(tmp_path)), _calls(tmp_path)
+
+
 def _calls_scored(project):
     db = Db(db_path(project), create=False)
     by_id = {int(r["id"]): r for r in db.nodes()}

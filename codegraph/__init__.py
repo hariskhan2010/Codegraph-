@@ -7,4 +7,4 @@ store instead of an LLM orchestrating shell steps through sidecar files.
 
 __version__ = "0.7.0"
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3

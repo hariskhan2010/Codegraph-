@@ -96,7 +96,9 @@ _ECHO_SERVER = textwrap.dedent('''
 def test_lsp_resolve_disambiguates_with_real_server(tmp_path):
     (tmp_path / "store.py").write_text("def persist(x):\n    return x\n")
     (tmp_path / "cache.py").write_text("def persist(x):\n    return x\n")
-    (tmp_path / "app.py").write_text("from store import persist\n\n"
+    # star import: `persist` is in scope but the import table can't name the
+    # module — the ambiguity only a real language server resolves.
+    (tmp_path / "app.py").write_text("from store import *\n\n"
                                      "def run():\n    return persist(1)\n")
     extract(tmp_path, semantic="none", scip="none")
 

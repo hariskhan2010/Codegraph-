@@ -80,15 +80,17 @@ def _ident_text(n: Node) -> str | None:
     return None
 
 
-def _receiver_of(callee: Node) -> tuple[str | None, str]:
+def _receiver_of(callee: Node) -> tuple[str | None, str, str | None]:
     """Classify the call whose method name is ``callee``.
 
-    Returns ``(receiver_name, kind)`` where kind is one of:
+    Returns ``(receiver_name, kind, receiver_text)`` where kind is one of:
       ``bare``   — ``foo()``            (no receiver)
       ``self``   — ``self.foo()`` / ``this.foo()``
       ``name``   — ``x.foo()``          (receiver is a single identifier ``x``)
       ``ctor``   — ``Foo().bar()``      (receiver is a constructor call)
       ``complex``— ``a.b.foo()`` etc.   (receiver is a non-trivial expression)
+    ``receiver_text`` is the raw source of the receiver (``a.b.c``) — used to
+    match dotted module aliases; ``None`` for a bare call.
     """
     p = callee.parent
     hops = 0
@@ -98,7 +100,7 @@ def _receiver_of(callee: Node) -> tuple[str | None, str]:
             # reached the call with no member-access wrapper on the way up
             recv = p.child_by_field_name("receiver") or p.child_by_field_name("object")
             if recv is None:
-                return None, "bare"
+                return None, "bare", None
             p = recv
             break
         if t in _MEMBER_ACCESS_TYPES:
@@ -122,25 +124,33 @@ def _receiver_of(callee: Node) -> tuple[str | None, str]:
         p = p.parent
         hops += 1
     else:
-        return None, "bare"
+        return None, "bare", None
     if p is None:
-        return None, "bare"
+        return None, "bare", None
 
     # p is now the receiver expression
+    text = p.text.decode("utf-8", "replace").strip()
+    if len(text) > 60 or "\n" in text:
+        text = None
     name = _ident_text(p)
     if name is not None:
-        return name, ("self" if name.lower() in _SELF_NAMES else "name")
+        return name, ("self" if name.lower() in _SELF_NAMES else "name"), text
     if p.type in _CALL_TYPES:
         fn = p.child_by_field_name("function") or p.child_by_field_name("name")
         cn = _ident_text(fn) if fn is not None else None
         if cn and cn[:1].isupper():
-            return cn, "ctor"
-        return None, "complex"
-    # self.attr.foo() — still anchored to the instance, but not to a known class
+            return cn, "ctor", cn
+        return None, "complex", text
+    # a.b.foo() — a dotted path, possibly a module alias
+    if text and all(seg.isidentifier() for seg in text.split(".") if seg):
+        first = text.split(".")[0]
+        if first.lower() in _SELF_NAMES:
+            return first, "self_attr", text
+        return text.rsplit(".", 1)[0], "dotted", text
     first = _ident_text(p.named_children[0]) if p.named_children else None
     if first and first.lower() in _SELF_NAMES:
-        return first, "self_attr"
-    return None, "complex"
+        return first, "self_attr", text
+    return None, "complex", text
 
 
 def _class_bindings(text: str) -> dict[str, str]:
@@ -160,6 +170,23 @@ def _class_bindings(text: str) -> dict[str, str]:
     for m in _BIND_RE.finditer(text):
         out.setdefault(m.group(1).lstrip("$"), m.group(2))
     return out
+
+
+def _resolve_module(module: str, rel: str) -> str:
+    """Dotted import module -> posix path fragment, resolving leading-dot
+    relative imports against the importing file ``rel``.
+
+    ``pkg.mod`` -> ``pkg/mod``. ``.mod`` in ``a/b/x.py`` -> ``a/b/mod``.
+    ``..pkg.mod`` in ``a/b/x.py`` -> ``a/pkg/mod``.
+    """
+    if not module.startswith("."):
+        return module.replace(".", "/")
+    dots = len(module) - len(module.lstrip("."))
+    tail = module[dots:].replace(".", "/")
+    parts = rel.replace("\\", "/").split("/")[:-1]  # package dir of `rel`
+    up = dots - 1
+    base = parts[: len(parts) - up] if 0 <= up <= len(parts) else []
+    return "/".join([*base, tail]).strip("/") if tail else "/".join(base)
 
 
 _HTTP_VERBS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
@@ -354,6 +381,10 @@ def extract_file(rel: str, src: bytes, lang: str) -> FileResult:
 
     # ---- imports (evidence for call resolution) --------------------------
     imported: set[str] = set()
+    # bound name -> module path (posix, relatives resolved), for precise lookup
+    sym_import: dict[str, tuple[str, str]] = {}   # name -> (module, symbol)
+    mod_alias: dict[str, str] = {}                # alias -> module
+    _seen_stmts: set[int] = set()
     for caps in _matches(lang, "imports", root):
         imp = (caps.get("import") or [None])[0]
         if imp is None:
@@ -373,6 +404,14 @@ def extract_file(rel: str, src: bytes, lang: str) -> FileResult:
                 "caller_slug": file_slug, "callee": nm, "relation": "imports",
                 "source_location": _loc(stmt), "lang": lang, "import_evidence": True,
             })
+        if cfg.import_specs and stmt.id not in _seen_stmts:
+            _seen_stmts.add(stmt.id)
+            for bound, module, symbol in cfg.import_specs(stmt, src):
+                mod = _resolve_module(module, rel)
+                if symbol is None:
+                    mod_alias.setdefault(bound, mod)
+                else:
+                    sym_import.setdefault(bound, (mod, symbol))
 
     # ---- calls ----------------------------------------------------------
     _bind_cache: dict[int, dict[str, str]] = {}
@@ -398,7 +437,7 @@ def extract_file(rel: str, src: bytes, lang: str) -> FileResult:
         caller_slug = enc.slug if enc else file_slug
         loc = f"L{callee.start_point[0] + 1}"
 
-        recv_name, recv_kind = _receiver_of(callee)
+        recv_name, recv_kind, recv_text = _receiver_of(callee)
         caller_class: str | None = None
         if enc is not None:
             if enc.is_class:
@@ -416,6 +455,22 @@ def extract_file(rel: str, src: bytes, lang: str) -> FileResult:
             recv_type = _bindings_for(enc).get(recv_name)
             if recv_type is None and recv_name in class_names:
                 recv_type = recv_name  # ClassName.static() / ClassName().x
+
+        # precise cross-file target from the import table
+        import_module: str | None = None
+        import_symbol: str | None = None
+        if name in sym_import:
+            import_module, import_symbol = sym_import[name]
+        else:
+            for cand in (recv_text, recv_name):
+                if cand and cand in mod_alias:
+                    import_module, import_symbol = mod_alias[cand], name
+                    break
+            else:
+                if recv_name and recv_name in sym_import:
+                    # `from pkg import sub` then `sub.fn()` -> pkg/sub
+                    base_mod, base_sym = sym_import[recv_name]
+                    import_module, import_symbol = f"{base_mod}/{base_sym}", name
 
         is_method = recv_kind != "bare"
 
@@ -442,10 +497,12 @@ def extract_file(rel: str, src: bytes, lang: str) -> FileResult:
 
         res.raw_refs.append({
             "caller_slug": caller_slug, "callee": name, "relation": "calls",
-            "source_location": loc, "import_evidence": name in imported,
+            "source_location": loc,
+            "import_evidence": name in imported,
             "lang": lang, "is_method": is_method, "recv": recv_name,
             "recv_kind": recv_kind, "recv_type": recv_type,
             "caller_class": caller_class,
+            "import_module": import_module, "import_symbol": import_symbol,
         })
 
     return res
