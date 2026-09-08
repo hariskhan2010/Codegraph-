@@ -48,12 +48,21 @@ dashboard.
 
 ## Install
 
-The PyPI package is **`code-graph`**; the command and import are **`codegraph`**.
+The command and `import` are **`codegraph`**; the package is **`code-graph`**
+(on both PyPI and npm — plain `codegraph` was taken on each).
 
 ```bash
-pip install code-graph        # once published
-# or, right now:
-pip install .                 # from a clone
+pipx install code-graph          # recommended: isolated global install
+# or
+pip install code-graph
+# or, for Node people (bootstraps the binary / pip under the hood):
+npm install -g code-graph
+```
+
+Right now, before publishing:
+
+```bash
+pip install .                       # from a clone
 pip install dist/code_graph-*.whl   # from a built wheel (python -m build)
 ```
 
@@ -113,12 +122,17 @@ pip install code_graph-0.6.0-py3-none-any.whl   # needs Python 3.11+
 codegraph setup                                  # wires every agent they have
 ```
 
-### Publishing to PyPI
+### Publishing
 
-```bash
-python -m build
-python -m twine upload dist/*        # needs a PyPI account + API token
-```
+- **PyPI**: `python -m build && python -m twine upload dist/*` (needs a PyPI token).
+  Once done, `pip install code-graph` / `pipx install code-graph` work everywhere,
+  and the npm wrapper's fallback works too.
+- **npm** (`npm/` dir): set `repository.url` in `npm/package.json` to your repo,
+  then `cd npm && npm publish`.
+- **Standalone binaries** (Python-free npm installs): push a `vX.Y.Z` tag —
+  `.github/workflows/release.yml` builds a `codegraph` executable for
+  linux/macos/windows × x64/arm64 (`packaging/codegraph.spec`) and attaches them
+  to the GitHub Release, where the npm wrapper downloads them.
 
 ## Use
 

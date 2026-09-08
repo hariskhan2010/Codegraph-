@@ -6,6 +6,14 @@ version in `pyproject.toml`.
 
 ## 0.6.0 — 2026-09-08
 
+### Added — npm install path
+- `npm/` — an npm wrapper package (`npm install -g code-graph`). Its postinstall
+  downloads the standalone binary for the platform from the GitHub Release
+  (no Python), falling back to `pipx install` / `pip install --user`.
+- `packaging/codegraph.spec` + `.github/workflows/release.yml` — a `vX.Y.Z` tag
+  builds one self-contained `codegraph` executable per OS/arch (PyInstaller) and
+  attaches it, plus the wheel + sdist, to the Release.
+
 ### Added — `codegraph setup` (zero-config)
 - `codegraph setup` — one command: detects every supported AI agent installed on
   the machine and wires them all (MCP + instructions, global scope), writes a
