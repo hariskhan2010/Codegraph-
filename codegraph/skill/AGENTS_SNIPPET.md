@@ -18,4 +18,6 @@ Setup / upkeep:
 - After code changes: `codegraph update <path>` (fast, no LLM).
 - If an MCP server named `codegraph` is configured, its tools (`query_graph`,
   `get_context`, `affected`, `god_nodes`, `shortest_path`, …) do the same thing.
+- If `carryover` is installed, also run `carryover resume` at the start of a
+  session (where we are) and `carryover checkpoint "…"` before the context fills.
 <!-- codegraph:end -->

@@ -143,3 +143,6 @@ If the user has an API key set (`ANTHROPIC_API_KEY` / …), you may instead run
   unambiguous candidate) / `AMBIGUOUS` (LLM). Report which when it matters.
 - Everything in `E:\codegraph\PLAN.md` is implemented (Phases 1–5); only Twitter/X
   scraping and a hosted dashboard are out of scope.
+- Pairs with **carryover** (`pip install carryover`): codegraph = "how the code is
+  wired", carryover = "where this working session is". If both are set up, run
+  `carryover resume` then `codegraph query`.
