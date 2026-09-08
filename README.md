@@ -69,12 +69,21 @@ pip install -e ".[dev]"                # tests + build tooling
 ### Wire it into your AI agent(s)
 
 ```bash
-codegraph install          # interactive: pick your agents, pick global/project
+codegraph setup            # one shot: finds every agent on your machine, wires them all
 ```
 
-It shows a numbered list, you type e.g. `1,4,7` (or `all`), choose scope, and it
-writes each agent's **MCP config** *and* its **"use codegraph first" instructions**
-in that agent's own format:
+That's the whole post-install step. It detects the AI CLIs/editors you have,
+writes each one's **MCP config** *and* its **"use codegraph first" instructions**
+(globally), and won't ask again. (The first time you run any `codegraph` command
+it offers to do this for you.)
+
+For hand-picking agents or project-scoped installs:
+
+```bash
+codegraph install          # interactive: numbered list, choose agents + scope
+```
+
+Formats written per agent:
 
 | Agent | MCP config | Instructions |
 |---|---|---|
@@ -101,7 +110,7 @@ They run:
 
 ```bash
 pip install code_graph-0.6.0-py3-none-any.whl   # needs Python 3.11+
-codegraph install                                # pick their agents
+codegraph setup                                  # wires every agent they have
 ```
 
 ### Publishing to PyPI

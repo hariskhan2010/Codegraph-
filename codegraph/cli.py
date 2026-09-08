@@ -10,6 +10,7 @@ so the ``/codegraph`` agent skill and existing configs carry over.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -450,6 +451,97 @@ def cmd_clone(args) -> int:
     return 0
 
 
+_SETUP_MARKER = Path.home() / ".codegraph" / ".setup-done"
+
+
+def _run_setup(keys, scope: str, *, quiet: bool = False) -> int:
+    from .installers import AGENTS, install as agent_install
+
+    wrote = 0
+    for key in keys:
+        agent = AGENTS[key]
+        try:
+            recs = agent_install(key, Path("."), scope=scope)
+        except ValueError:
+            continue
+        if agent.manual:
+            print(f"  {agent.label}: {agent.manual}")
+            continue
+        if recs:
+            wrote += 1
+            if not quiet:
+                print(f"  {agent.label}: {', '.join(r['what'] for r in recs)}")
+    try:
+        _SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        _SETUP_MARKER.write_text("done\n")
+    except OSError:
+        pass
+    if wrote:
+        print(f"\ncodegraph is wired into {wrote} agent(s) - restart them to pick it up.")
+    return 0
+
+
+def cmd_setup(args) -> int:
+    from .installers import MENU, detected
+
+    if args.all:
+        keys = [a.key for a in MENU]
+    else:
+        keys = [a.key for a in MENU if detected(a.key)]
+    scope = "project" if args.project else "global"
+
+    if not keys:
+        print("No AI agent detected on this machine.")
+        if sys.stdin.isatty():
+            chosen = _pick_agents_interactively()
+            keys = [a.key for a in chosen]
+        if not keys:
+            print("Run `codegraph install` to pick agents manually.")
+            _SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+            _SETUP_MARKER.write_text("done\n")
+            return 0
+    else:
+        print("Detected: " + ", ".join(
+            next(a.label for a in MENU if a.key == k) for k in keys))
+    return _run_setup(keys, scope)
+
+
+def _interactive() -> bool:
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _first_run_nudge(cmd: str) -> None:
+    """On the first genuinely-interactive use of codegraph, offer to set it up."""
+    if (cmd in ("setup", "install", "install-skill", "serve", "merge-driver")
+            or _SETUP_MARKER.exists()
+            or os.environ.get("CODEGRAPH_NO_SETUP")
+            or not _interactive()):
+        return
+    from .installers import MENU, detected
+
+    keys = [a.key for a in MENU if detected(a.key)]
+    if not keys:
+        return
+    print("codegraph - first run. Detected: "
+          + ", ".join(next(a.label for a in MENU if a.key == k) for k in keys))
+    try:
+        ans = input("Wire codegraph into them now (MCP + skill/instructions)? [Y/n] ")
+    except EOFError:
+        return
+    if ans.strip().lower() in ("", "y", "yes"):
+        _run_setup(keys, "global")
+        print()
+    else:
+        try:                              # remember the "no" so it stops asking
+            _SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
+            _SETUP_MARKER.write_text("declined\n")
+        except OSError:
+            pass
+
+
 def _pick_agents_interactively():
     from .installers import MENU, _GLM_KIMI_NOTE, detected
 
@@ -780,6 +872,14 @@ def build_parser() -> argparse.ArgumentParser:
                      help="only install the git merge driver")
     ins.set_defaults(func=cmd_install)
 
+    st = sub.add_parser("setup", help="one-shot: wire codegraph into every AI "
+                        "agent detected on this machine (global scope)")
+    st.add_argument("--all", action="store_true",
+                    help="install for every supported agent, not just detected ones")
+    st.add_argument("--project", action="store_true",
+                    help="install into the current repo instead of global config")
+    st.set_defaults(func=cmd_setup)
+
     md = sub.add_parser("merge-driver", help=argparse.SUPPRESS)  # invoked by git
     md.add_argument("base")
     md.add_argument("ours")
@@ -832,4 +932,8 @@ def _force_utf8_stdio() -> None:
 def main(argv: list[str] | None = None) -> int:
     _force_utf8_stdio()
     args = build_parser().parse_args(argv)
+    try:
+        _first_run_nudge(getattr(args, "cmd", "") or "")
+    except (KeyboardInterrupt, Exception):
+        pass
     return args.func(args)

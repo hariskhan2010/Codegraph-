@@ -6,6 +6,14 @@ version in `pyproject.toml`.
 
 ## 0.6.0 — 2026-09-08
 
+### Added — `codegraph setup` (zero-config)
+- `codegraph setup` — one command: detects every supported AI agent installed on
+  the machine and wires them all (MCP + instructions, global scope), writes a
+  `~/.codegraph/.setup-done` marker so it never re-runs.
+- **First-run hook**: the first interactive use of any `codegraph` command offers
+  to run setup ("Wire codegraph into them now? [Y/n]"). Skipped for `serve` /
+  non-TTY / `CODEGRAPH_NO_SETUP=1` / once the marker exists.
+
 ### Added — interactive multi-agent installer
 - `codegraph install` with no arguments prints a numbered agent picker
   (Claude Code / Desktop, Cursor, VS Code, Zed, Windsurf, Gemini CLI, Qwen Code,

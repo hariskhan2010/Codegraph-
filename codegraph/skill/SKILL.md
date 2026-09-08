@@ -114,7 +114,8 @@ If the user has an API key set (`ANTHROPIC_API_KEY` / …), you may instead run
 | `codegraph add <url\|arxiv\|file> <path>` | ingest an external doc/paper/transcript into the graph |
 | `codegraph prs [N] <path>` | rank open PRs by graph blast radius (needs `gh`) |
 | `codegraph export {json,report,html,graphml,gexf,dot,cypher,csv,jsonl,mermaid,obsidian,tree,all} <path>` | re-render / export (`cypher --run` loads a live Neo4j) |
-| `codegraph install [<path>]` | interactive: wire codegraph into your AI agent(s) — MCP + instructions, global or project (`--agent NAME --scope global` to script; `--git` adds the merge driver) |
+| `codegraph setup` | one-shot: wire codegraph into every AI agent detected on this machine (global). Runs automatically on first use. |
+| `codegraph install [<path>]` | interactive picker: choose agents + global/project (`--agent NAME --scope global` to script; `--git` adds the merge driver) |
 | `codegraph install-skill` | Claude-only shortcut for the `/codegraph` skill |
 | `codegraph serve <path> [--http --port N]` | MCP server (stdio or Streamable-HTTP/SSE) |
 

@@ -166,3 +166,39 @@ def test_reinstall_no_duplicate_mcp_entry(fake_home, project):
 def test_menu_has_eleven_agents():
     assert len(I.MENU) == 11
     assert all(a.manual is None for a in I.MENU)
+
+
+# --------------------------------------------------------------------------- #
+# `codegraph setup` — one-shot, detected agents
+# --------------------------------------------------------------------------- #
+
+def test_setup_installs_all_detected(fake_home, project, monkeypatch, capsys):
+    (fake_home / ".gemini").mkdir()
+    (fake_home / ".codex").mkdir()
+    from codegraph import cli
+
+    marker = fake_home / ".codegraph" / ".setup-done"
+    monkeypatch.setattr(cli, "_SETUP_MARKER", marker)
+    rc = cli.cmd_setup(type("A", (), {"all": False, "project": False})())
+    assert rc == 0
+    assert marker.exists()
+    assert (fake_home / ".gemini" / "settings.json").exists()
+    assert (fake_home / ".codex" / "config.toml").exists()
+    assert not (fake_home / ".cursor").exists()          # not detected -> skipped
+    out = capsys.readouterr().out
+    assert "Gemini CLI" in out and "Codex CLI" in out
+
+
+def test_first_run_nudge_skips_when_marked_or_non_tty(fake_home, monkeypatch):
+    from codegraph import cli
+
+    monkeypatch.setattr(cli, "_SETUP_MARKER", fake_home / ".setup-done")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    called = []
+    monkeypatch.setattr(cli, "_run_setup", lambda *a, **k: called.append(1))
+    cli._first_run_nudge("query")
+    assert not called                                    # non-tty -> silent
+
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    cli._first_run_nudge("serve")                         # serve never nudges
+    assert not called
