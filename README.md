@@ -56,7 +56,8 @@ codegraph context "validate_token"       # its body + every caller/callee signat
 
 Outputs land in `your/project/codegraph-out/` — `codegraph.db` (source of truth),
 `graph.json`, `GRAPH_REPORT.md`, `graph.html`. After code changes:
-`codegraph update .` (fast, no LLM).
+`codegraph update .` (fast, no LLM). Override the output dir with `CODEGRAPH_OUT`
+(a name or an absolute path).
 
 ---
 
@@ -173,6 +174,32 @@ All 20 languages work out of the box (`tree-sitter-language-pack`). Extras:
 
 > The PyPI/npm package is **`code-graph`**; the command and `import` are
 > **`codegraph`** (plain `codegraph` was already taken on both).
+
+---
+
+## Command reference
+
+| | |
+|---|---|
+| `extract <path\|git-url>` | full build. `--semantic skill\|<backend>`, `--scip`, `--lsp`, `--whisper-model`, `--branch`, `--force` |
+| `update <path>` | incremental rebuild — content-changed files only, no LLM |
+| `watch <path>` | `update` on a debounced file watcher |
+| `check-update <path>` | is the graph stale? (no rebuild) |
+| `query "<q>" [path]` | ask the graph → a bounded subgraph |
+| `context "<sym>" [path]` | the symbol's body + every caller/callee signature |
+| `affected "<sym>" [path]` | reverse-dependency traversal — "what breaks if I change this" |
+| `explain "<sym>" [path]` · `path "<a>" "<b>" [path]` · `god-nodes [path]` | node detail · shortest path · hubs |
+| `apply-semantic <path>` · `relabel-communities <path>` | fold the `/codegraph` skill's annotations back in |
+| `embed <path>` | opt-in embedding tier for synonym retrieval |
+| `add <url\|arxiv\|notion:ID\|file> <path>` | ingest an external doc into the graph |
+| `export <fmt> <path>` | `json report html graphml gexf dot cypher csv jsonl mermaid obsidian wiki tree` |
+| `diagnose <path>` · `stats <path>` | graph-health check · size summary |
+| `prs [N] <path>` | rank open PRs by graph blast radius (needs `gh`) |
+| `merge-graphs <roots…> -o <out>` · `clone <src> <dst>` · `global …` | multi-repo |
+| `serve <path> [--http]` | MCP server — stdio or Streamable-HTTP/SSE |
+| `setup` · `install [--agent …]` · `install-skill` | wire codegraph into your AI agent(s) |
+
+`codegraph <cmd> --help` for the full flag list.
 
 ---
 
