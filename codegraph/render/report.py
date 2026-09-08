@@ -60,7 +60,7 @@ def build_report(db: Db) -> str:
         for r in db.conn.execute(
             "SELECT community, COUNT(*) total, "
             "SUM(CASE WHEN kind IN ('section','concept') "
-            "         OR file_type IN ('document','paper','concept') "
+            "         OR file_type IN ('document','paper','concept','transcript','image') "
             "         THEN 1 ELSE 0 END) docs "
             "FROM nodes WHERE community IS NOT NULL GROUP BY community"
         ).fetchall()

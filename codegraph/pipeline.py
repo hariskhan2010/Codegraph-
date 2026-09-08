@@ -8,10 +8,13 @@ import time
 from pathlib import Path
 
 from . import __version__
+from . import ids as _ids
 from .config import db_path, out_dir
 from .db import Db
 from .detect import detect
 from .extract import extract_file
+
+_MEDIA_TYPES = ("image", "video", "audio")
 
 
 def _backup_if_protected(db: Db, root: Path) -> str | None:
@@ -82,6 +85,49 @@ def _index_doc(db: Db, f, root: Path) -> dict:
     return {"file": f.rel, "error": res.error, **counts}
 
 
+def _index_media(db: Db, f, root: Path) -> dict:
+    """Image -> one file node (a vision subagent describes it in the semantic
+    pass). Audio/video -> transcribe to Markdown and run the document tier;
+    if no Whisper backend is available, a stub node with a hint."""
+    from .extract.docs import extract_doc
+
+    if f.file_type in ("audio", "video"):
+        from .config import out_dir
+        from .media import transcribe
+
+        got = transcribe(f.abs_path, scratch=out_dir(root) / ".transcribe")
+        if got:
+            md, backend = got
+            res = extract_doc(f.rel, md, ".md")
+            for n in res.nodes:
+                n["file_type"] = "transcript"
+            counts = db.replace_file(f.rel, res.nodes, res.edges, origin="ast")
+            db.upsert_file(
+                path=f.rel, abs_identity=f.abs_path.resolve().as_posix(),
+                file_type="transcript", lang=f"transcript:{backend}",
+                content_sha256=f.content_sha256, ast_hash=f.content_sha256,
+                semantic_hash="", mtime=f.mtime, seen=time.time(), status="present",
+            )
+            return {"file": f.rel, "error": None, "transcribed": backend, **counts}
+        note = "no Whisper backend (pip install code-graph[media])"
+    else:
+        note = None
+
+    slug = _ids.file_slug(f.rel)
+    node = {"slug": slug, "label": f.rel.rsplit("/", 1)[-1], "kind": "file",
+            "file_type": f.file_type, "source_location": "L1"}
+    if note:
+        node["rationale"] = note
+    counts = db.replace_file(f.rel, [node], [], origin="ast")
+    db.upsert_file(
+        path=f.rel, abs_identity=f.abs_path.resolve().as_posix(),
+        file_type=f.file_type, lang=f.file_type, content_sha256=f.content_sha256,
+        ast_hash=f.content_sha256, semantic_hash="",
+        mtime=f.mtime, seen=time.time(), status="present",
+    )
+    return {"file": f.rel, "error": None, **counts}
+
+
 def extract(
     root: Path | str,
     *,
@@ -127,13 +173,19 @@ def extract(
     results: list[dict] = []
     to_index = list(det.code)
     if docs:
-        to_index += [f for f in det.files if f.file_type in ("document", "paper")]
+        to_index += [f for f in det.files
+                     if f.file_type in ("document", "paper", *_MEDIA_TYPES)]
     for f in to_index:
         seen.add(f.rel)
         prev = db.file_row(f.rel)
         if not force and prev and prev["ast_hash"] == f.content_sha256:
             continue
-        r = (_index_doc if f.file_type in ("document", "paper") else _index_one)(db, f, root)
+        if f.file_type in ("document", "paper"):
+            r = _index_doc(db, f, root)
+        elif f.file_type in _MEDIA_TYPES:
+            r = _index_media(db, f, root)
+        else:
+            r = _index_one(db, f, root)
         results.append(r)
         if progress:
             progress(r)
@@ -222,6 +274,14 @@ def extract(
     stats = db.stats()
     stats["semantic_request"] = req_stats
     stats["files_indexed"] = len(results)
+    _media = [f for f in det.files if f.file_type in _MEDIA_TYPES]
+    if _media:
+        stats["media"] = {
+            "images": sum(f.file_type == "image" for f in _media),
+            "av": sum(f.file_type in ("audio", "video") for f in _media),
+            "transcribed": sorted({r["transcribed"] for r in results
+                                   if r.get("transcribed")}),
+        }
     stats["skipped_sensitive"] = len(det.skipped_sensitive)
     stats["resolved_xfile_edges"] = resolved
     stats["scip"] = scip_stats
@@ -252,7 +312,7 @@ def check_update(root: Path | str) -> dict:
     # `extract` indexes code + docs; ingested sources under the output dir are
     # never walked and must not be reported as deleted.
     walked = list(det.code) + [f for f in det.files
-                               if f.file_type in ("document", "paper")]
+                               if f.file_type in ("document", "paper", *_MEDIA_TYPES)]
     now = {f.rel: f for f in walked}
     ingested_prefix = out_dir(root).name + "/"
 

@@ -6,6 +6,19 @@ version in `pyproject.toml`.
 
 ## 0.7.0 — 2026-09-08
 
+### Added — media tier (images, audio, video)
+- Image files become graph nodes; the cross-doc idea subagent Reads each one
+  (it has vision) and adds a concept for what it depicts — UI screenshot,
+  diagram, chart, photo — linked into the idea graph.
+- Audio and video are transcribed to a Markdown transcript (`## [mm:ss]`
+  section per ~2 min) and run through the document tier, so they are queryable
+  like any doc. Transcription tries `faster-whisper` (`pip install
+  code-graph[media]`), then `openai-whisper`, then a `whisper` CLI; with none
+  present the file becomes a stub node with a one-line hint — never a hard
+  failure (graphify aborts the whole run when Whisper is missing).
+- `detect` now classifies `.bmp/.tiff`, `.avi/.m4v`, and `.mp3/.wav/.m4a/.flac/
+  .ogg/.aac/.opus/.wma`.
+
 ### Added — cross-doc idea graph (`--semantic skill`)
 - The fanned-out skill pass now also writes `semantic/ideas.json` (every doc's
   sections + text + a code index). One subagent extracts `concepts` — standalone

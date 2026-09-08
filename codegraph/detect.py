@@ -7,7 +7,7 @@ Ported from graphify's ``detect.py`` essentials:
   (a Windows-ANSI ``.gitignore`` with ``Orçamento/`` must still match — graphify
   #1810 / #2221)
 * 3-stage sensitive-file skipping so credentials never reach the LLM
-* extension -> ``code|document|paper|image|video`` classification
+* extension -> ``code|document|paper|image|video|audio`` classification
 """
 
 from __future__ import annotations
@@ -50,8 +50,9 @@ _CODE: dict[str, str] = {
 }
 _DOC = {".md", ".mdx", ".rst", ".txt", ".adoc"}
 _PAPER = {".tex"}
-_IMAGE = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
-_VIDEO = {".mp4", ".mov", ".mkv", ".webm"}
+_IMAGE = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".tiff", ".tif"}
+_VIDEO = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+_AUDIO = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".aac", ".opus", ".wma"}
 
 _SKIP_DIRS = {
     ".git", ".hg", ".svn", "node_modules", "__pycache__", ".mypy_cache",
@@ -202,6 +203,8 @@ def _classify(suffix: str) -> tuple[str, str | None] | None:
         return "image", None
     if s in _VIDEO:
         return "video", None
+    if s in _AUDIO:
+        return "audio", None
     return None
 
 

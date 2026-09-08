@@ -68,6 +68,16 @@ def cmd_extract(args) -> int:
     elif not args.no_semantic and args.semantic != "skill":
         print("semantic: no LLM backend available (set an API key or install "
               "`claude`) — AST-only graph")
+    if st.get("media"):
+        m = st["media"]
+        bits = []
+        if m["images"]:
+            bits.append(f"{m['images']} images (described in the semantic pass)")
+        if m["av"]:
+            done = f" via {', '.join(m['transcribed'])}" if m["transcribed"] else \
+                   " — no Whisper backend, stubbed (pip install code-graph[media])"
+            bits.append(f"{m['av']} audio/video{done}")
+        print("media: " + "; ".join(bits))
     if st.get("backup"):
         print(f"backed up previous artifacts -> {st['backup']}")
     if st.get("semantic_request"):

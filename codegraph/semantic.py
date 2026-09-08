@@ -331,10 +331,14 @@ _NAMING_INSTRUCTIONS = (
 )
 
 _IDEAS_INSTRUCTIONS = (
-    "You extract the IDEA graph from this repo's docs. `docs` has each doc file's "
-    "`sections` and `source`; `code_index` lists the main code symbols + their "
-    "community. Emit: (1) `concepts` — one node per named idea, principle, "
-    "mechanism, or decision that is NOT already a code symbol "
+    "You extract the IDEA graph from this repo's docs (and images). `docs` has "
+    "each doc/transcript file's `sections` and `source`; `code_index` lists the "
+    "main code symbols + their community; `images` (if present) is a list of "
+    "image file paths — Read each one and add a concept for what it depicts "
+    "(UI screenshot -> layout/purpose; diagram -> components + connections; "
+    "chart -> metric + trend; photo -> subject), anchored to that image path. "
+    "Emit: (1) `concepts` — one node per named idea, principle, "
+    "mechanism, decision, or image that is NOT already a code symbol "
     "({\"label\", \"kind\": \"concept\", \"anchor_file\": \"<a docs path>\", "
     "\"rationale\": \"<=20 words\", \"tags\": [\"...\"]}); (2) `idea_edges` "
     "linking them — endpoints are a concept label OR a label from `code_index` / "
@@ -389,11 +393,21 @@ def _collect_payload(db: Db, root: Path, *, max_files: int, max_chars: int,
     return payload
 
 
+def _collect_images(db: Db) -> list[str]:
+    return [
+        r["path"] for r in db.conn.execute(
+            "SELECT path FROM files WHERE file_type='image' AND status='present' "
+            "ORDER BY path"
+        ).fetchall()
+    ]
+
+
 def _collect_doc_payload(db: Db, root: Path, *, max_chars: int) -> list[dict]:
-    """Doc files with their section list + text — feeds the cross-doc idea pass."""
+    """Doc / transcript files with their section list + text — feeds the
+    cross-doc idea pass (audio & video arrive here already transcribed)."""
     out: list[dict] = []
     for f in db.conn.execute(
-        "SELECT path FROM files WHERE file_type IN ('document','paper') "
+        "SELECT path FROM files WHERE file_type IN ('document','paper','transcript') "
         "AND status='present' ORDER BY path"
     ).fetchall():
         rows = db.conn.execute(
@@ -462,16 +476,18 @@ def write_request(db: Db, root: Path, *, max_files: int = 400,
             "instructions": _NAMING_INSTRUCTIONS, "communities": communities,
         }, indent=1, ensure_ascii=False), encoding="utf-8")
         docs = _collect_doc_payload(db, root, max_chars=max_chars)
-        if docs:
+        images = _collect_images(db)
+        if docs or images:
             (cdir / "ideas.json").write_text(json.dumps({
                 "instructions": _IDEAS_INSTRUCTIONS, "root": str(root),
-                "docs": docs, "code_index": _code_index(db),
+                "docs": docs, "images": images, "code_index": _code_index(db),
             }, indent=1, ensure_ascii=False), encoding="utf-8")
         index = {
             "instructions": _DISPATCH_INSTRUCTIONS, "root": str(root),
             "chunked": True, "chunk_dir": CHUNK_DIR, "chunks": n,
             "files": len(payload_files), "communities": len(communities),
-            "docs": len(docs), "ideas": bool(docs),
+            "docs": len(docs), "images": len(images),
+            "ideas": bool(docs or images),
         }
         (out / REQUEST_NAME).write_text(
             json.dumps(index, indent=1, ensure_ascii=False), encoding="utf-8")

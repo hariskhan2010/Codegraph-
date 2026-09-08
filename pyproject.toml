@@ -44,7 +44,8 @@ langs = [
     "tree-sitter-rust",
 ]
 embeddings = ["numpy"]
-all = ["code-graph[langs,embeddings]"]
+media = ["faster-whisper>=1.0"]   # audio / video transcription (images need no dep)
+all = ["code-graph[langs,embeddings,media]"]
 dev = ["code-graph[langs,embeddings]", "pytest", "pytest-asyncio",
        "python-lsp-server", "build"]
 

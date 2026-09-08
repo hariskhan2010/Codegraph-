@@ -145,6 +145,10 @@ If the user has an API key set (`ANTHROPIC_API_KEY` / …), you may instead run
   (`pip install codegraph[all]`).
 - Markdown / reST / AsciiDoc headings are indexed as `section` nodes by default
   (`extract --no-docs` to skip), so `query` reaches design notes too.
+- Media: images become nodes the idea subagent describes with vision; audio &
+  video are transcribed (`faster-whisper` via `pip install code-graph[media]`,
+  else `openai-whisper` / a `whisper` CLI, else a stub node) and indexed as a
+  transcript doc.
 - Precise resolver tiers: `extract --scip` (auto when a `*.scip` index + `scip`
   CLI are present) and `extract --lsp` (drives `pylsp`/`gopls`/`rust-analyzer`/… —
   precise, slower). Both emit `evidence='scip'`/`evidence='lsp'` edges and no-op
