@@ -50,9 +50,10 @@ dev = ["code-graph[langs,embeddings]", "pytest", "pytest-asyncio",
        "python-lsp-server", "build"]
 
 [project.urls]
-# TODO before publishing: point these at your real repo
-Homepage = "https://pypi.org/project/code-graph/"
-# Repository = "https://github.com/<you>/code-graph"
+Homepage = "https://github.com/hariskhan2010/Codegraph-"
+Repository = "https://github.com/hariskhan2010/Codegraph-"
+Changelog = "https://github.com/hariskhan2010/Codegraph-/blob/main/CHANGELOG.md"
+Issues = "https://github.com/hariskhan2010/Codegraph-/issues"
 
 [project.scripts]
 codegraph = "codegraph.cli:main"
