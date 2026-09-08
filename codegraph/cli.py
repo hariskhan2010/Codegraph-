@@ -30,6 +30,15 @@ def _need_db(root: Path):
 
 def cmd_extract(args) -> int:
     from .pipeline import extract
+    from .repo import is_git_url, resolve_source
+
+    if is_git_url(args.path):
+        try:
+            local = resolve_source(args.path, branch=args.branch)
+        except RuntimeError as e:
+            sys.exit(str(e))
+        print(f"cloned {args.path} -> {local}")
+        args.path = str(local)
 
     def prog(r):
         if "nodes" in r:
@@ -757,6 +766,8 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--whisper-model", default="base", metavar="NAME",
                    help="Whisper model for audio/video transcription "
                         "(tiny|base|small|medium|large; default base)")
+    e.add_argument("--branch", metavar="NAME",
+                   help="when PATH is a git URL: branch to clone")
     e.add_argument("--no-docs", action="store_true",
                    help="skip Markdown / reST / AsciiDoc section indexing")
     e.add_argument("--scip", metavar="PATH",

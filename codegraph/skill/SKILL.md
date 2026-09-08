@@ -15,6 +15,8 @@ from it.
 ```
 /codegraph                       # build the graph if missing, else answer nothing — just report status
 /codegraph <path>                # same, for a path
+/codegraph https://github.com/<owner>/<repo>   # clone (cached) then build
+/codegraph <repo-url> --branch <b>             # a specific branch
 /codegraph update [<path>]       # incremental rebuild: re-parse only changed files, no LLM (graphify's `. --update`)
 /codegraph <path> --update       # same — graphify muscle memory works too
 /codegraph rebuild [<path>]      # full `extract --force` (re-runs the LLM pass)

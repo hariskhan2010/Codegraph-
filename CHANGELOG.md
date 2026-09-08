@@ -6,6 +6,12 @@ version in `pyproject.toml`.
 
 ## 0.7.0 — 2026-09-08
 
+### Added — `codegraph extract <git-url>`
+- `codegraph extract https://github.com/owner/repo` (or any git URL, `git@…`,
+  `--branch`) clones the repo — shallow, cached under `~/.codegraph/repos/`,
+  `git fetch` on re-use — then builds the graph in the checkout. graphify's
+  `/graphify https://github.com/owner/repo`.
+
 ### Added — graphify feature parity: wiki export, hyperedges, `--whisper-model`
 - `codegraph export wiki` — an agent-crawlable wiki (`index.md` + one article
   per community, members with rationale + the edges leaving the community).
