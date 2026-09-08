@@ -90,7 +90,7 @@ def cmd_extract(args) -> int:
 
 def cmd_apply_semantic(args) -> int:
     from .analyze import analyze
-    from .cluster import cluster  # noqa: F401
+    from .cluster import cluster
     from .config import out_dir
     from .render.graph_json import write_graph_json
     from .render.html import write_html
@@ -102,6 +102,8 @@ def cmd_apply_semantic(args) -> int:
     r = apply_response(db, root, args.response)
     db.reindex_fts()
     db.recompute_degrees()
+    if r.get("concepts"):
+        cluster(db)  # concept nodes + idea edges reshape the communities
     analyze(db)
     write_graph_json(db, out_dir(root))
     write_report(db, out_dir(root))
@@ -109,9 +111,11 @@ def cmd_apply_semantic(args) -> int:
     db.close()
     src = (f"{r['merged_chunks']} chunk responses"
            if r.get("merged_chunks") else "semantic-response.json")
+    ideas = (f", {r['concepts']} concepts + {r['idea_edges']} idea edges"
+             if r.get("concepts") else "")
     print(f"applied {src}: {r['annotated']} rationale, {r['amb_edges']} "
-          f"ambiguous edges, {r['communities_named']} communities named "
-          f"({r['dropped']} dropped)")
+          f"ambiguous edges, {r['communities_named']} communities named"
+          f"{ideas} ({r['dropped']} dropped)")
     print(f"-> {out_dir(root)}")
     return 0
 

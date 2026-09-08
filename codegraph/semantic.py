@@ -18,7 +18,7 @@ import re
 import time
 from pathlib import Path
 
-from .db import Db
+from .db import Db, _norm_label, quantize_confidence
 from .llm import Backend, LLMError, complete
 
 _SYSTEM = """You annotate an existing code graph. You are given one source file \
@@ -330,14 +330,34 @@ _NAMING_INSTRUCTIONS = (
     '{"community_names": {"<id>": "<name>"}}.'
 )
 
+_IDEAS_INSTRUCTIONS = (
+    "You extract the IDEA graph from this repo's docs. `docs` has each doc file's "
+    "`sections` and `source`; `code_index` lists the main code symbols + their "
+    "community. Emit: (1) `concepts` — one node per named idea, principle, "
+    "mechanism, or decision that is NOT already a code symbol "
+    "({\"label\", \"kind\": \"concept\", \"anchor_file\": \"<a docs path>\", "
+    "\"rationale\": \"<=20 words\", \"tags\": [\"...\"]}); (2) `idea_edges` "
+    "linking them — endpoints are a concept label OR a label from `code_index` / "
+    "a section label. Relations: `semantically_similar_to` (two things that solve "
+    "the same problem with no structural link — the cross-doc links that matter), "
+    "`conceptually_related_to`, `rationale_for` (a decision -> what it governs), "
+    "`references`. Every edge: {\"src\",\"dst\",\"relation\","
+    "\"confidence\":\"INFERRED\"|\"AMBIGUOUS\",\"confidence_score\":0.55-0.95,"
+    "\"why\":\"<=15 words\"}. Write `" + CHUNK_DIR + "/ideas-response.json` as "
+    "{\"concepts\":[...],\"idea_edges\":[...]}. Be selective: only genuinely "
+    "cross-cutting, non-obvious links."
+)
+
 _DISPATCH_INSTRUCTIONS = (
     "This request is fanned out. Dispatch one general-purpose subagent per "
     "`" + CHUNK_DIR + "/request-NNN.json` IN A SINGLE MESSAGE (they run in "
     "parallel); give each the text of its request file and have it write "
-    "`" + CHUNK_DIR + "/response-NNN.json`. Also handle `" + CHUNK_DIR +
-    "/communities.json` (one more subagent, or do it yourself) -> `" + CHUNK_DIR +
-    "/communities-response.json`. When all response files exist, run "
-    "`codegraph apply-semantic <path>` — it merges them."
+    "`" + CHUNK_DIR + "/response-NNN.json`. Also dispatch one subagent for "
+    "`" + CHUNK_DIR + "/ideas.json` -> `" + CHUNK_DIR + "/ideas-response.json` "
+    "(the cross-doc idea graph) and handle `" + CHUNK_DIR + "/communities.json` "
+    "(a subagent, or yourself) -> `" + CHUNK_DIR + "/communities-response.json`. "
+    "When all response files exist, run `codegraph apply-semantic <path>` — it "
+    "merges them."
 )
 
 
@@ -367,6 +387,42 @@ def _collect_payload(db: Db, root: Path, *, max_files: int, max_chars: int,
         if len(payload) >= max_files:
             break
     return payload
+
+
+def _collect_doc_payload(db: Db, root: Path, *, max_chars: int) -> list[dict]:
+    """Doc files with their section list + text — feeds the cross-doc idea pass."""
+    out: list[dict] = []
+    for f in db.conn.execute(
+        "SELECT path FROM files WHERE file_type IN ('document','paper') "
+        "AND status='present' ORDER BY path"
+    ).fetchall():
+        rows = db.conn.execute(
+            "SELECT label, source_location FROM nodes "
+            "WHERE source_file=? AND kind='section'", (f["path"],)
+        ).fetchall()
+        try:
+            text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        out.append({
+            "file": f["path"],
+            "sections": [{"label": r["label"], "line": _line_of(r["source_location"])}
+                         for r in rows],
+            "source": text[:max_chars],
+        })
+    return out
+
+
+def _code_index(db: Db, limit: int = 80) -> list[dict]:
+    return [
+        {"label": r["label"], "file": r["source_file"],
+         "community": r["community_name"] or ""}
+        for r in db.conn.execute(
+            "SELECT label, source_file, community_name FROM nodes "
+            "WHERE origin='ast' AND kind IN ('function','class','method') "
+            "ORDER BY degree DESC LIMIT ?", (limit,)
+        ).fetchall()
+    ]
 
 
 def write_request(db: Db, root: Path, *, max_files: int = 400,
@@ -405,10 +461,17 @@ def write_request(db: Db, root: Path, *, max_files: int = 400,
         (cdir / "communities.json").write_text(json.dumps({
             "instructions": _NAMING_INSTRUCTIONS, "communities": communities,
         }, indent=1, ensure_ascii=False), encoding="utf-8")
+        docs = _collect_doc_payload(db, root, max_chars=max_chars)
+        if docs:
+            (cdir / "ideas.json").write_text(json.dumps({
+                "instructions": _IDEAS_INSTRUCTIONS, "root": str(root),
+                "docs": docs, "code_index": _code_index(db),
+            }, indent=1, ensure_ascii=False), encoding="utf-8")
         index = {
             "instructions": _DISPATCH_INSTRUCTIONS, "root": str(root),
             "chunked": True, "chunk_dir": CHUNK_DIR, "chunks": n,
             "files": len(payload_files), "communities": len(communities),
+            "docs": len(docs), "ideas": bool(docs),
         }
         (out / REQUEST_NAME).write_text(
             json.dumps(index, indent=1, ensure_ascii=False), encoding="utf-8")
@@ -454,8 +517,17 @@ def _merge_chunk_responses(cdir: Path) -> dict | None:
                          .get("community_names") or {})
         except (OSError, ValueError):
             pass
-    return {"annotations": ann, "ambiguous_edges": amb, "community_names": names,
-            "_chunks": len(resp)}
+    out = {"annotations": ann, "ambiguous_edges": amb, "community_names": names,
+           "_chunks": len(resp)}
+    ideas_file = cdir / "ideas-response.json"
+    if ideas_file.exists():
+        try:
+            di = json.loads(ideas_file.read_text(encoding="utf-8"))
+            out["concepts"] = di.get("concepts") or []
+            out["idea_edges"] = di.get("idea_edges") or []
+        except (OSError, ValueError):
+            pass
+    return out
 
 
 def apply_response(db: Db, root: Path, response: dict | str | Path | None = None) -> dict:
@@ -505,8 +577,97 @@ def apply_response(db: Db, root: Path, response: dict | str | Path | None = None
                             (row["content_sha256"], rel))
     totals["communities_named"] = apply_community_names(
         db, response.get("community_names") or {})
+    totals.update(_apply_ideas(db, response.get("concepts") or [],
+                               response.get("idea_edges") or []))
     totals["merged_chunks"] = merged_chunks
     db.set_meta("semantic_backend", "skill")
     db.set_meta("semantic_at", str(time.time()))
     db.conn.commit()
     return totals
+
+
+_IDEA_RELATIONS = {
+    "semantically_similar_to", "conceptually_related_to", "rationale_for",
+    "references",
+}
+
+
+def _apply_ideas(db: Db, concepts: list[dict], idea_edges: list[dict]) -> dict:
+    """Ingest the cross-doc idea graph: concept nodes + the non-structural edges
+    that link ideas to each other and to code. Idempotent — replaces the prior
+    ``origin='semantic'`` concept layer.  All idea edges are ``evidence='llm-idea'``.
+    """
+    from . import ids as _ids
+
+    with db.tx() as c:
+        c.execute("DELETE FROM edges WHERE evidence='llm-idea'")
+        c.execute("DELETE FROM nodes WHERE origin='semantic' AND kind='concept'")
+
+        # resolver: norm_label -> node id.  Prefer a concept we just made, then a
+        # doc section, then anything.
+        existing: dict[str, int] = {}
+        for r in c.execute(
+            "SELECT id, norm_label, kind FROM nodes WHERE norm_label IS NOT NULL"
+        ).fetchall():
+            k = (r["norm_label"] or "").strip(".()")
+            if not k:
+                continue
+            cur = existing.get(k)
+            if cur is None:
+                existing[k] = int(r["id"])
+
+        made = 0
+        for con in concepts:
+            label = str(con.get("label") or "").strip()
+            if not label:
+                continue
+            anchor = con.get("anchor_file") or ""
+            slug = _ids.make_slug("concept", label)
+            rationale = (str(con.get("rationale") or "").strip()[:300]) or None
+            extra = None
+            tags = [str(t)[:40] for t in (con.get("tags") or []) if t][:6]
+            if tags:
+                extra = json.dumps({"concepts": tags}, sort_keys=True)
+            cur = c.execute(
+                "INSERT INTO nodes(slug,label,norm_label,file_type,source_file,"
+                "kind,origin,rationale,extra) VALUES(?,?,?,?,?,?,?,?,?)",
+                (slug, label, _norm_label(label), "concept", anchor or None,
+                 "concept", "semantic", rationale, extra),
+            )
+            nid = int(cur.lastrowid)
+            existing[_norm_label(label).strip(".()")] = nid
+            made += 1
+
+        def rid(label: str) -> int | None:
+            return existing.get(_norm_label(str(label)).strip(".()"))
+
+        linked = 0
+        for e in idea_edges:
+            rel = e.get("relation")
+            if rel not in _IDEA_RELATIONS:
+                rel = "conceptually_related_to"
+            s, d = rid(e.get("src", "")), rid(e.get("dst", ""))
+            if s is None or d is None or s == d:
+                continue
+            conf = e.get("confidence", "INFERRED")
+            if conf not in ("INFERRED", "AMBIGUOUS"):
+                conf = "INFERRED"
+            score = e.get("confidence_score")
+            try:
+                score = float(score)
+            except (TypeError, ValueError):
+                score = 0.75
+            if conf == "INFERRED":
+                score = quantize_confidence(min(0.95, max(0.55, score)))
+            else:
+                score = min(0.3, max(0.1, score))
+            cur = c.execute(
+                "INSERT OR IGNORE INTO edges(src,dst,relation,confidence,"
+                "confidence_score,context,source_file,evidence,weight) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (s, d, rel, conf, score, "idea",
+                 str(e.get("why") or "")[:200] or None, "llm-idea", 1.0),
+            )
+            if cur.rowcount > 0:
+                linked += 1
+    return {"concepts": made, "idea_edges": linked}

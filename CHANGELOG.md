@@ -6,6 +6,20 @@ version in `pyproject.toml`.
 
 ## 0.7.0 — 2026-09-08
 
+### Added — cross-doc idea graph (`--semantic skill`)
+- The fanned-out skill pass now also writes `semantic/ideas.json` (every doc's
+  sections + text + a code index). One subagent extracts `concepts` — standalone
+  nodes for named ideas, principles, and decisions that are not code symbols —
+  and `idea_edges` linking them: `semantically_similar_to` (the cross-document
+  "these solve the same problem" links), `conceptually_related_to`,
+  `rationale_for`, `references`.
+- `apply-semantic` ingests `ideas-response.json` into `kind='concept'`
+  (`origin='semantic'`) nodes and `evidence='llm-idea'` edges, re-clusters so
+  concepts join their communities, and the report's Surprising Connections now
+  surfaces the cross-doc links. Idempotent — replaces the prior concept layer.
+- This closes the last gap vs graphify's concept/rationale layer; the honest
+  provenance is kept (idea edges are INFERRED/AMBIGUOUS, never EXTRACTED).
+
 ### Added — parallel subagent semantic pass (`--semantic skill`)
 - `extract --semantic skill` now fans the annotation work out the way graphify
   does: for a repo above `--chunk-files` (default 25) files it writes

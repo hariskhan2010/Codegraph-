@@ -59,7 +59,8 @@ def build_report(db: Db) -> str:
         r["community"]: (r["docs"] / r["total"] if r["total"] else 0.0)
         for r in db.conn.execute(
             "SELECT community, COUNT(*) total, "
-            "SUM(CASE WHEN kind='section' OR file_type IN ('document','paper') "
+            "SUM(CASE WHEN kind IN ('section','concept') "
+            "         OR file_type IN ('document','paper','concept') "
             "         THEN 1 ELSE 0 END) docs "
             "FROM nodes WHERE community IS NOT NULL GROUP BY community"
         ).fetchall()

@@ -118,6 +118,54 @@ def test_apply_semantic_merges_chunk_responses(tmp_path):
     assert got == "entry point of mod3.py"
 
 
+def test_ideas_request_written_and_concept_graph_ingested(tmp_path):
+    for i in range(7):
+        (tmp_path / f"mod{i}.py").write_text(f"def f{i}(x):\n    return x\n")
+    (tmp_path / "ARCHITECTURE.md").write_text(
+        "# Architecture\n## Tenant Isolation\nRLS plus app-layer checks.\n"
+    )
+    (tmp_path / "SECURITY.md").write_text(
+        "# Security\n## Two-Layer Defence\nDefence in depth for tenant data.\n"
+    )
+    extract(tmp_path, semantic="skill", scip="none", semantic_chunk_files=3)
+    cdir = out_dir(tmp_path) / CHUNK_DIR
+    index = json.loads((out_dir(tmp_path) / "semantic-request.json").read_text())
+    assert index["ideas"] is True and index["docs"] == 2
+    ideas_req = json.loads((cdir / "ideas.json").read_text())
+    assert {d["file"] for d in ideas_req["docs"]} == {"ARCHITECTURE.md", "SECURITY.md"}
+
+    # a subagent writes the idea graph; concepts link across the two docs
+    (cdir / "ideas-response.json").write_text(json.dumps({
+        "concepts": [
+            {"label": "Tenant Isolation", "kind": "concept",
+             "anchor_file": "ARCHITECTURE.md", "rationale": "keep tenants apart",
+             "tags": ["security"]},
+            {"label": "Two-Layer Defence", "kind": "concept",
+             "anchor_file": "SECURITY.md", "rationale": "defence in depth"},
+        ],
+        "idea_edges": [
+            {"src": "Two-Layer Defence", "dst": "Tenant Isolation",
+             "relation": "semantically_similar_to", "confidence": "INFERRED",
+             "confidence_score": 0.85, "why": "same goal, different doc"},
+        ],
+    }))
+    for k in (1, 2, 3):
+        (cdir / f"response-{k:03d}.json").write_text('{"annotations": {}}')
+
+    db = Db(db_path(tmp_path), create=False)
+    r = apply_response(db, tmp_path, None)
+    assert r["concepts"] == 2 and r["idea_edges"] == 1
+    row = db.conn.execute(
+        "SELECT id FROM nodes WHERE label='Tenant Isolation' AND kind='concept'"
+    ).fetchone()
+    assert row is not None
+    e = db.conn.execute(
+        "SELECT relation, evidence FROM edges WHERE evidence='llm-idea'"
+    ).fetchone()
+    db.close()
+    assert e["relation"] == "semantically_similar_to"
+
+
 def test_apply_semantic_reads_response_file(tmp_path):
     proj = _proj(tmp_path)
     extract(proj, semantic="skill", scip="none")
