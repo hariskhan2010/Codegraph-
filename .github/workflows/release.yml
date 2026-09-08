@@ -1,9 +1,16 @@
 name: Release
 
-# Tag a version (v0.6.0) -> build standalone binaries for every OS/arch, build
-# the wheel + sdist, and attach them all to a GitHub Release. The `code-graph`
-# npm wrapper downloads these binaries so `npm install -g code-graph` needs no
-# Python.
+# Push a version tag (v0.7.0) -> build standalone binaries for every OS/arch,
+# build the wheel + sdist, attach everything to a GitHub Release, and (if the
+# one-time setup below is done) publish to PyPI and npm.
+#
+# One-time setup for auto-publish:
+#   * PyPI  — https://pypi.org/manage/account/publishing/  add a "trusted
+#             publisher": owner `hariskhan2010`, repo `Codegraph-`,
+#             workflow `release.yml`, environment `pypi`.  No token needed.
+#   * npm   — repo Settings -> Secrets -> Actions -> add `NPM_TOKEN`
+#             (an npm "Automation" access token).
+# Missing setup just skips that publish step; the Release still gets every artifact.
 
 on:
   push:
@@ -11,6 +18,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write        # PyPI trusted publishing (OIDC)
 
 jobs:
   binary:
@@ -18,11 +26,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,  asset: codegraph-linux-x64 }
+          - { os: ubuntu-latest,    asset: codegraph-linux-x64 }
           - { os: ubuntu-24.04-arm, asset: codegraph-linux-arm64 }
-          - { os: macos-13,       asset: codegraph-macos-x64 }
-          - { os: macos-14,       asset: codegraph-macos-arm64 }
-          - { os: windows-latest, asset: codegraph-windows-x64.exe }
+          - { os: macos-13,         asset: codegraph-macos-x64 }
+          - { os: macos-14,         asset: codegraph-macos-arm64 }
+          - { os: windows-latest,   asset: codegraph-windows-x64.exe }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +57,7 @@ jobs:
 
   pypi:
     runs-on: ubuntu-latest
+    environment: pypi
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -57,3 +66,21 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        continue-on-error: true
+
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", registry-url: "https://registry.npmjs.org" }
+      - name: Publish to npm
+        if: ${{ env.NPM_TOKEN != '' }}
+        working-directory: npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        continue-on-error: true
