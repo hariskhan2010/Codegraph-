@@ -295,6 +295,8 @@ def run(db: Db, root: Path, backend: Backend, *, force: bool = False,
 
 REQUEST_NAME = "semantic-request.json"
 RESPONSE_NAME = "semantic-response.json"
+CHUNK_DIR = "semantic"           # holds request-NNN.json / response-NNN.json
+SKILL_CHUNK_FILES = 25           # files/chunk once the skill fans out to subagents
 
 _SKILL_INSTRUCTIONS = (
     "You are the semantic pass for codegraph. For every file in `files`, write a "
@@ -310,16 +312,42 @@ _SKILL_INSTRUCTIONS = (
     "`codegraph apply-semantic <path>`."
 )
 
+_CHUNK_INSTRUCTIONS = (
+    "You are ONE parallel worker of the codegraph semantic pass. Annotate only "
+    "the files in this chunk's `files`: a one-line `rationale` (<=15 words) per "
+    "symbol, using only labels from each file's `symbols` list, plus any "
+    "`ambiguous_edges`. Write ONLY this chunk's result to `" + CHUNK_DIR +
+    "/response-<NNN>.json` (same NNN as this request) as "
+    '{"annotations": {"<file>": [{"label","line","rationale","concepts"}]}, '
+    '"ambiguous_edges": {"<file>": [{"src","dst","relation","why"}]}}. '
+    "Do not touch other chunks or the communities file."
+)
 
-def write_request(db: Db, root: Path, *, max_files: int = 400,
-                  max_chars: int = _MAX_FILE_CHARS, force: bool = False) -> dict:
-    """Emit ``semantic-request.json`` — everything the skill needs to do the
-    annotation + community naming itself. Does not call any model."""
+_NAMING_INSTRUCTIONS = (
+    "Name every community for its domain role: a 2-5 word Title Case label "
+    "(\"Stripe Checkout Flow\", \"JWT Auth & Sessions\"); a tests-only cluster -> "
+    "\"<subject> Tests\". Write `" + CHUNK_DIR + "/communities-response.json` as "
+    '{"community_names": {"<id>": "<name>"}}.'
+)
+
+_DISPATCH_INSTRUCTIONS = (
+    "This request is fanned out. Dispatch one general-purpose subagent per "
+    "`" + CHUNK_DIR + "/request-NNN.json` IN A SINGLE MESSAGE (they run in "
+    "parallel); give each the text of its request file and have it write "
+    "`" + CHUNK_DIR + "/response-NNN.json`. Also handle `" + CHUNK_DIR +
+    "/communities.json` (one more subagent, or do it yourself) -> `" + CHUNK_DIR +
+    "/communities-response.json`. When all response files exist, run "
+    "`codegraph apply-semantic <path>` — it merges them."
+)
+
+
+def _collect_payload(db: Db, root: Path, *, max_files: int, max_chars: int,
+                     force: bool) -> list[dict]:
     files = db.conn.execute(
         "SELECT path, content_sha256, semantic_hash FROM files "
         "WHERE file_type='code' AND status='present' ORDER BY path"
     ).fetchall()
-    payload_files = []
+    payload: list[dict] = []
     for f in files:
         if not force and f["semantic_hash"] and f["semantic_hash"] == f["content_sha256"]:
             continue
@@ -330,39 +358,134 @@ def write_request(db: Db, root: Path, *, max_files: int = 400,
             text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        payload_files.append({
+        payload.append({
             "file": f["path"],
             "symbols": [{"label": r["label"], "line": _line_of(r["source_location"]),
                          "kind": r["kind"]} for r in rows],
             "source": text[:max_chars],
         })
-        if len(payload_files) >= max_files:
+        if len(payload) >= max_files:
             break
+    return payload
 
+
+def write_request(db: Db, root: Path, *, max_files: int = 400,
+                  max_chars: int = _MAX_FILE_CHARS, force: bool = False,
+                  chunk_files: int = 0) -> dict:
+    """Emit the skill's semantic request. Does not call any model.
+
+    ``chunk_files == 0`` (default) writes a single ``semantic-request.json``.
+    ``chunk_files > 0`` and enough files fans the work out: one
+    ``semantic/request-NNN.json`` per group plus ``semantic/communities.json``,
+    so the ``/codegraph`` skill can dispatch a subagent per chunk (graphify's
+    parallel model) while codegraph still owns the chunking and the merge.
+    """
     from .config import out_dir
+
+    payload_files = _collect_payload(
+        db, root, max_files=max_files, max_chars=max_chars, force=force)
+    communities = community_digest(db)
+    out = out_dir(root)
+    out.mkdir(parents=True, exist_ok=True)
+
+    if chunk_files and len(payload_files) > chunk_files:
+        cdir = out / CHUNK_DIR
+        cdir.mkdir(parents=True, exist_ok=True)
+        # clear any stale chunk files from a prior run
+        for old in cdir.glob("*.json"):
+            old.unlink()
+        groups = [payload_files[i:i + chunk_files]
+                  for i in range(0, len(payload_files), chunk_files)]
+        n = len(groups)
+        for i, g in enumerate(groups, 1):
+            (cdir / f"request-{i:03d}.json").write_text(json.dumps({
+                "instructions": _CHUNK_INSTRUCTIONS,
+                "chunk": f"{i}/{n}", "root": str(root), "files": g,
+            }, indent=1, ensure_ascii=False), encoding="utf-8")
+        (cdir / "communities.json").write_text(json.dumps({
+            "instructions": _NAMING_INSTRUCTIONS, "communities": communities,
+        }, indent=1, ensure_ascii=False), encoding="utf-8")
+        index = {
+            "instructions": _DISPATCH_INSTRUCTIONS, "root": str(root),
+            "chunked": True, "chunk_dir": CHUNK_DIR, "chunks": n,
+            "files": len(payload_files), "communities": len(communities),
+        }
+        (out / REQUEST_NAME).write_text(
+            json.dumps(index, indent=1, ensure_ascii=False), encoding="utf-8")
+        return {"files": len(payload_files), "communities": len(communities),
+                "chunks": n, "path": str(out / REQUEST_NAME),
+                "chunk_dir": str(cdir)}
 
     req = {
         "instructions": _SKILL_INSTRUCTIONS,
         "root": str(root),
         "files": payload_files,
-        "communities": community_digest(db),
+        "communities": communities,
     }
-    target = out_dir(root) / REQUEST_NAME
-    target.parent.mkdir(parents=True, exist_ok=True)
+    target = out / REQUEST_NAME
     target.write_text(json.dumps(req, indent=1, ensure_ascii=False), encoding="utf-8")
-    return {"files": len(payload_files), "communities": len(req["communities"]),
-            "path": str(target)}
+    return {"files": len(payload_files), "communities": len(communities),
+            "chunks": 0, "path": str(target)}
 
 
-def apply_response(db: Db, root: Path, response: dict | str | Path) -> dict:
-    """Ingest the skill's ``semantic-response.json`` back into the graph."""
+def _merge_chunk_responses(cdir: Path) -> dict | None:
+    """Fold ``semantic/response-*.json`` + ``communities-response.json`` into one
+    ``{annotations, ambiguous_edges, community_names}`` payload."""
+    resp = sorted(cdir.glob("response-*.json"))
+    names_file = cdir / "communities-response.json"
+    if not resp and not names_file.exists():
+        return None
+    ann: dict[str, list] = {}
+    amb: dict[str, list] = {}
+    names: dict[str, str] = {}
+    for p in resp:
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for f, items in (d.get("annotations") or {}).items():
+            ann.setdefault(f, []).extend(items)
+        for f, items in (d.get("ambiguous_edges") or {}).items():
+            amb.setdefault(f, []).extend(items)
+        names.update(d.get("community_names") or {})
+    if names_file.exists():
+        try:
+            names.update(json.loads(names_file.read_text(encoding="utf-8"))
+                         .get("community_names") or {})
+        except (OSError, ValueError):
+            pass
+    return {"annotations": ann, "ambiguous_edges": amb, "community_names": names,
+            "_chunks": len(resp)}
+
+
+def apply_response(db: Db, root: Path, response: dict | str | Path | None = None) -> dict:
+    """Ingest the skill's semantic response(s) back into the graph.
+
+    Accepts an in-memory dict, a single response file, or — when ``response`` is
+    ``None`` or a directory — the fanned-out ``semantic/response-*.json`` set,
+    falling back to a single ``semantic-response.json``.
+    """
     from .config import out_dir
 
-    if isinstance(response, (str, Path)):
-        p = Path(response)
-        if not p.exists():
-            p = out_dir(root) / RESPONSE_NAME
-        response = json.loads(p.read_text(encoding="utf-8"))
+    merged_chunks = 0
+    if not isinstance(response, dict):
+        p = Path(response) if response is not None else None
+        cdir = out_dir(root) / CHUNK_DIR
+        if p is not None and p.is_dir():
+            cdir, p = p, None
+        if p is not None and p.is_file():
+            response = json.loads(p.read_text(encoding="utf-8"))
+        else:
+            m = _merge_chunk_responses(cdir)
+            if m is not None:
+                merged_chunks = m.pop("_chunks", 0)
+                response = m
+            else:
+                single = out_dir(root) / RESPONSE_NAME
+                if not single.exists():
+                    raise FileNotFoundError(
+                        f"no semantic response at {single} or {cdir}/response-*.json")
+                response = json.loads(single.read_text(encoding="utf-8"))
 
     ann = response.get("annotations") or {}
     amb = response.get("ambiguous_edges") or {}
@@ -382,6 +505,7 @@ def apply_response(db: Db, root: Path, response: dict | str | Path) -> dict:
                             (row["content_sha256"], rel))
     totals["communities_named"] = apply_community_names(
         db, response.get("community_names") or {})
+    totals["merged_chunks"] = merged_chunks
     db.set_meta("semantic_backend", "skill")
     db.set_meta("semantic_at", str(time.time()))
     db.conn.commit()

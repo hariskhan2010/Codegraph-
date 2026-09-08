@@ -91,6 +91,7 @@ def extract(
     docs: bool = True,
     scip: str | Path | None = "auto",
     lsp: bool = False,
+    semantic_chunk_files: int | None = None,
     progress=None,
 ) -> dict:
     """Full build. Re-indexes every code file, then resolves, (optionally)
@@ -211,9 +212,12 @@ def extract(
 
     req_stats = None
     if want_skill:
-        from .semantic import write_request
+        from .semantic import SKILL_CHUNK_FILES, write_request
 
-        req_stats = write_request(db, root, force=semantic_force or force)
+        cf = (SKILL_CHUNK_FILES if semantic_chunk_files is None
+              else max(0, semantic_chunk_files))
+        req_stats = write_request(db, root, force=semantic_force or force,
+                                  chunk_files=cf)
 
     stats = db.stats()
     stats["semantic_request"] = req_stats

@@ -6,6 +6,20 @@ version in `pyproject.toml`.
 
 ## 0.7.0 — 2026-09-08
 
+### Added — parallel subagent semantic pass (`--semantic skill`)
+- `extract --semantic skill` now fans the annotation work out the way graphify
+  does: for a repo above `--chunk-files` (default 25) files it writes
+  `codegraph-out/semantic/request-NNN.json` per group plus
+  `semantic/communities.json`, and `semantic-request.json` becomes a small index
+  (`"chunked": true`). The `/codegraph` skill dispatches one general-purpose
+  subagent per chunk in a single message (they run in parallel).
+- codegraph still owns the chunking and the merge — subagents only annotate
+  existing nodes by `(label, line)`, never mint ids — so graphify's ghost-node
+  failure mode does not come back.
+- `apply-semantic` with no `--response` auto-discovers and merges
+  `semantic/response-*.json` + `communities-response.json`; `--response` also
+  accepts a directory. `--chunk-files 0` keeps the old single-file flow.
+
 ### Changed — path-precise import resolution (accuracy)
 - **Schema v3.** Python `import` statements are parsed into precise bindings
   (`from pkg.mod import fn [as g]`, `import pkg.mod as m`, relative `from .x`),

@@ -6,7 +6,7 @@ import json
 from codegraph.config import db_path, out_dir
 from codegraph.db import Db
 from codegraph.pipeline import extract
-from codegraph.semantic import apply_response, write_request
+from codegraph.semantic import CHUNK_DIR, apply_response, write_request
 
 
 def _proj(tmp_path):
@@ -64,6 +64,58 @@ def test_apply_semantic_ingests_annotations_and_names(tmp_path):
     db.close()
     assert row["rationale"] == "authenticate a user"
     assert row["community_name"] in ("User Authentication", "Shopping Cart")
+
+
+def test_skill_request_fans_out_into_chunks(tmp_path):
+    for i in range(7):
+        (tmp_path / f"mod{i}.py").write_text(
+            f"def f{i}(x):\n    return g{i}(x)\n\ndef g{i}(x):\n    return x\n"
+        )
+    extract(tmp_path, semantic="skill", scip="none", semantic_chunk_files=3)
+    out = out_dir(tmp_path)
+    index = json.loads((out / "semantic-request.json").read_text())
+    assert index["chunked"] is True and index["chunks"] == 3
+    cdir = out / CHUNK_DIR
+    reqs = sorted(cdir.glob("request-*.json"))
+    assert [p.name for p in reqs] == [
+        "request-001.json", "request-002.json", "request-003.json"]
+    assert (cdir / "communities.json").exists()
+    seen = set()
+    for p in reqs:
+        d = json.loads(p.read_text())
+        assert 0 < len(d["files"]) <= 3
+        seen |= {f["file"] for f in d["files"]}
+    assert seen == {f"mod{i}.py" for i in range(7)}
+
+
+def test_apply_semantic_merges_chunk_responses(tmp_path):
+    for i in range(7):
+        (tmp_path / f"mod{i}.py").write_text(f"def f{i}(x):\n    return x\n")
+    extract(tmp_path, semantic="skill", scip="none", semantic_chunk_files=3)
+    cdir = out_dir(tmp_path) / CHUNK_DIR
+    db = Db(db_path(tmp_path), create=False)
+    cids = [r["id"] for r in db.conn.execute("SELECT id FROM communities ORDER BY id")]
+
+    # one subagent per chunk writes its own response file
+    for k, p in enumerate(sorted(cdir.glob("request-*.json")), 1):
+        files = [f["file"] for f in json.loads(p.read_text())["files"]]
+        (cdir / f"response-{k:03d}.json").write_text(json.dumps({
+            "annotations": {
+                fn: [{"label": f"f{fn[3]}()", "line": 1,
+                      "rationale": f"entry point of {fn}"}]
+                for fn in files
+            }
+        }))
+    (cdir / "communities-response.json").write_text(json.dumps(
+        {"community_names": {str(cids[0]): "Module Fixtures"}}))
+
+    r = apply_response(db, tmp_path, None)
+    assert r["merged_chunks"] == 3
+    assert r["annotated"] == 7 and r["communities_named"] >= 1
+    got = db.conn.execute(
+        "SELECT rationale FROM nodes WHERE label='f3()'").fetchone()["rationale"]
+    db.close()
+    assert got == "entry point of mod3.py"
 
 
 def test_apply_semantic_reads_response_file(tmp_path):

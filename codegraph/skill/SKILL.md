@@ -49,30 +49,38 @@ from it.
 
 ### The semantic step (do this after a first `extract --semantic skill`)
 
-`--semantic skill` builds the structure and writes `codegraph-out/semantic-request.json`
-instead of calling an API. **You** (this session) are the model — like graphify:
+`--semantic skill` builds the structure and writes the request instead of
+calling an API. **You** (this session, plus subagents) are the model — like
+graphify. Read `<path>/codegraph-out/semantic-request.json` first; codegraph
+picks the shape:
 
-1. Read `<path>/codegraph-out/semantic-request.json`. It has `files` (each with
-   `symbols` + `source`) and `communities` (each with member symbols).
-2. Write `<path>/codegraph-out/semantic-response.json`:
-   ```json
-   {
-     "annotations": { "<file>": [ {"label": "...", "line": 12,
-        "rationale": "<=15 words: what it's for", "concepts": ["..."]} ] },
-     "ambiguous_edges": { "<file>": [ {"src":"...","dst":"...",
-        "relation":"references","why":"<=12 words"} ] },
-     "community_names": { "0": "Stripe Checkout Flow", "1": "JWT Auth & Sessions" }
-   }
-   ```
-   Use only labels from each file's `symbols` list. Community names are 2-5 words,
-   Title Case, domain-role not language ("Candle Time Arithmetic"); a tests-only
-   cluster → "<subject> Tests".
-3. Run **`codegraph apply-semantic <path>`** — it ingests your JSON, re-clusters
-   labels, and re-renders the report.
+**A. Fanned out (`"chunked": true`)** — the common case for a real repo.
+codegraph wrote `codegraph-out/semantic/request-001.json … request-NNN.json`
+plus `semantic/communities.json`. **Dispatch one general-purpose subagent per
+chunk IN A SINGLE MESSAGE** (parallel) — hand each the text of its
+`request-NNN.json` and have it write `semantic/response-NNN.json`:
+```json
+{ "annotations": { "<file>": [ {"label":"…","line":12,
+     "rationale":"<=15 words: what it's for","concepts":["…"]} ] },
+  "ambiguous_edges": { "<file>": [ {"src":"…","dst":"…",
+     "relation":"references","why":"<=12 words"} ] } }
+```
+Handle `semantic/communities.json` too (one more subagent, or yourself) →
+`semantic/communities-response.json` with
+`{"community_names": {"0":"Stripe Checkout Flow", …}}`. When every
+`response-NNN.json` and the communities file exist, run
+**`codegraph apply-semantic <path>`** — it merges them.
 
-For a big repo, `semantic-request.json` can be large — it's fine to fill
-`annotations` for the top files and always fill `community_names` (that's the
-cheap, high-value part). Skip this whole step for `update`.
+**B. Single file (no `chunked` key)** — small repo. The request carries `files`
+(each with `symbols` + `source`) and `communities`. Write
+`codegraph-out/semantic-response.json` with all three keys (`annotations`,
+`ambiguous_edges`, `community_names`), then `codegraph apply-semantic <path>`.
+
+Either mode: use only labels from each file's `symbols` list; omit a symbol
+rather than guess; community names are 2-5 words, Title Case, domain-role not
+language ("Candle Time Arithmetic"). Skip this whole step for `update`.
+`extract --chunk-files 0` forces mode B; `--chunk-files N` sets the group size
+(default 25).
 
 If the user has an API key set (`ANTHROPIC_API_KEY` / …), you may instead run
 `codegraph extract <path> --semantic auto` and let it do the pass itself.

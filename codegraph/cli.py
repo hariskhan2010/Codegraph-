@@ -46,6 +46,7 @@ def cmd_extract(args) -> int:
     scip = "none" if args.no_scip else (args.scip or "auto")
     st = extract(args.path, force=args.force, semantic=semantic,
                  docs=not args.no_docs, scip=scip, lsp=args.lsp,
+                 semantic_chunk_files=args.chunk_files,
                  progress=prog if args.verbose else None)
     print(f"\n{st['nodes']} nodes · {st['edges']} edges · {st['communities']} communities "
           f"· {st['files']} files")
@@ -72,9 +73,17 @@ def cmd_extract(args) -> int:
     if st.get("semantic_request"):
         r = st["semantic_request"]
         print("\nsemantic pass deferred to the /codegraph skill:")
-        print(f"  wrote {r['path']}  ({r['files']} files, {r['communities']} communities)")
-        print("  the skill fills semantic-response.json, then: "
-              f"codegraph apply-semantic {args.path}")
+        if r.get("chunks"):
+            print(f"  wrote {r['chunk_dir']}\\request-*.json  "
+                  f"({r['chunks']} chunks, {r['files']} files, "
+                  f"{r['communities']} communities)")
+            print(f"  the skill fans out one subagent per chunk, then: "
+                  f"codegraph apply-semantic {args.path}")
+        else:
+            print(f"  wrote {r['path']}  "
+                  f"({r['files']} files, {r['communities']} communities)")
+            print("  the skill fills semantic-response.json, then: "
+                  f"codegraph apply-semantic {args.path}")
     print(f"-> {out_dir(Path(args.path).resolve())}")
     return 0
 
@@ -90,8 +99,7 @@ def cmd_apply_semantic(args) -> int:
 
     db = _need_db(Path(args.path))
     root = Path(args.path).resolve()
-    src = args.response or (out_dir(root) / "semantic-response.json")
-    r = apply_response(db, root, src)
+    r = apply_response(db, root, args.response)
     db.reindex_fts()
     db.recompute_degrees()
     analyze(db)
@@ -99,8 +107,11 @@ def cmd_apply_semantic(args) -> int:
     write_report(db, out_dir(root))
     write_html(db, out_dir(root))
     db.close()
-    print(f"applied: {r['annotated']} rationale, {r['amb_edges']} ambiguous edges, "
-          f"{r['communities_named']} communities named ({r['dropped']} dropped)")
+    src = (f"{r['merged_chunks']} chunk responses"
+           if r.get("merged_chunks") else "semantic-response.json")
+    print(f"applied {src}: {r['annotated']} rationale, {r['amb_edges']} "
+          f"ambiguous edges, {r['communities_named']} communities named "
+          f"({r['dropped']} dropped)")
     print(f"-> {out_dir(root)}")
     return 0
 
@@ -724,6 +735,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "anthropic|openai|gemini|ollama|claude-cli, `auto` (default), "
                         "`skill` (defer to the /codegraph skill — no API key), or `none`")
     e.add_argument("--no-semantic", action="store_true", help="skip the LLM pass")
+    e.add_argument("--chunk-files", type=int, default=None, metavar="N",
+                   help="--semantic skill: files per chunk for subagent fan-out "
+                        "(default 25; 0 = one request file, no fan-out)")
     e.add_argument("--no-docs", action="store_true",
                    help="skip Markdown / reST / AsciiDoc section indexing")
     e.add_argument("--scip", metavar="PATH",
@@ -804,8 +818,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     aps = with_path(sub.add_parser("apply-semantic",
                     help="ingest the /codegraph skill's semantic-response.json"))
-    aps.add_argument("--response", help="path to the response JSON "
-                     "(default: <out>/semantic-response.json)")
+    aps.add_argument("--response", help="path to the response JSON or a dir of "
+                     "them (default: semantic/response-*.json, else "
+                     "semantic-response.json)")
     aps.set_defaults(func=cmd_apply_semantic)
 
     rlc = with_path(sub.add_parser("relabel-communities",
