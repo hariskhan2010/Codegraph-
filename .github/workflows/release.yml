@@ -7,7 +7,7 @@ name: Release
 # One-time setup for auto-publish:
 #   * PyPI  — https://pypi.org/manage/account/publishing/  add a "trusted
 #             publisher": owner `hariskhan2010`, repo `Codegraph-`,
-#             workflow `release.yml`, environment `pypi`.  No token needed.
+#             workflow `release.yml`, environment left blank.  No token needed.
 #   * npm   — repo Settings -> Secrets -> Actions -> add `NPM_TOKEN`
 #             (an npm "Automation" access token).
 # Missing setup just skips that publish step; the Release still gets every artifact.
@@ -57,7 +57,6 @@ jobs:
 
   pypi:
     runs-on: ubuntu-latest
-    environment: pypi
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
