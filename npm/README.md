@@ -1,11 +1,11 @@
-# code-graph (npm)
+# codegraph-tool (npm)
 
-npm wrapper for [**codegraph**](https://pypi.org/project/code-graph/) — turn a
+npm wrapper for [**codegraph**](https://pypi.org/project/codegraph-tool/) — turn a
 codebase into a persistent, queryable graph (SQLite + tree-sitter) that AI
 coding agents query instead of grepping.
 
 ```bash
-npm install -g code-graph
+npm install -g codegraph-tool
 codegraph setup            # wire it into every AI agent on your machine
 ```
 
@@ -13,8 +13,8 @@ codegraph setup            # wire it into every AI agent on your machine
 
 1. **downloading the standalone binary** for your OS/arch from the matching
    GitHub Release — fully self-contained, no Python; then
-2. falling back to **`pipx install code-graph`**, then
-3. **`pip install --user code-graph`** (needs Python 3.11+).
+2. falling back to **`pipx install codegraph-tool`**, then
+3. **`pip install --user codegraph-tool`** (needs Python 3.11+).
 
 The real docs live with the Python package. Common commands:
 

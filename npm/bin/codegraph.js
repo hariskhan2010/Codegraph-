@@ -26,17 +26,17 @@ if (mode === "binary") {
   else { cmd = "codegraph"; cmdArgs = args; }
 } else {
   process.stderr.write(
-    "code-graph is not installed. Try:\n" +
-    "  pipx install code-graph      (recommended)\n" +
-    "  pip install code-graph\n");
+    "codegraph-tool is not installed. Try:\n" +
+    "  pipx install codegraph-tool  (recommended)\n" +
+    "  pip install codegraph-tool\n");
   process.exit(1);
 }
 
 const r = spawnSync(cmd, cmdArgs, { stdio: "inherit" });
 if (r.error && r.error.code === "ENOENT") {
   process.stderr.write(
-    `code-graph: '${cmd}' not found on PATH.\n` +
-    "Reinstall:  npm rebuild code-graph   or   pipx install code-graph\n");
+    `codegraph-tool: '${cmd}' not found on PATH.\n` +
+    "Reinstall:  npm rebuild codegraph-tool   or   pipx install codegraph-tool\n");
   process.exit(1);
 }
 process.exit(r.status === null ? 1 : r.status);

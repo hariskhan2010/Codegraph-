@@ -1,8 +1,8 @@
 {
-  "name": "code-graph",
+  "name": "codegraph-tool",
   "version": "0.7.0",
-  "description": "Turn a codebase into a persistent, queryable graph (SQLite + tree-sitter). npm wrapper for the Python `code-graph` package; the command is `codegraph`.",
-  "keywords": ["code-graph", "call-graph", "tree-sitter", "mcp", "graphrag", "agent", "codegraph"],
+  "description": "Turn a codebase into a persistent, queryable graph (SQLite + tree-sitter). npm wrapper for the Python `codegraph-tool` package; the command is `codegraph`.",
+  "keywords": ["codegraph-tool", "code-graph", "call-graph", "tree-sitter", "mcp", "graphrag", "agent", "codegraph"],
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/hariskhan2010/Codegraph-.git" },
   "homepage": "https://github.com/hariskhan2010/Codegraph-#readme",

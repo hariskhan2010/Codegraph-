@@ -85,7 +85,7 @@ def cmd_extract(args) -> int:
             bits.append(f"{m['images']} images (described in the semantic pass)")
         if m["av"]:
             done = f" via {', '.join(m['transcribed'])}" if m["transcribed"] else \
-                   " — no Whisper backend, stubbed (pip install code-graph[media])"
+                   " — no Whisper backend, stubbed (pip install codegraph-tool[media])"
             bits.append(f"{m['av']} audio/video{done}")
         print("media: " + "; ".join(bits))
     if st.get("backup"):
@@ -542,40 +542,28 @@ def cmd_setup(args) -> int:
     return _run_setup(keys, scope)
 
 
-def _interactive() -> bool:
-    try:
-        return sys.stdin.isatty() and sys.stdout.isatty()
-    except (AttributeError, ValueError):
-        return False
-
-
 def _first_run_nudge(cmd: str) -> None:
-    """On the first genuinely-interactive use of codegraph, offer to set it up."""
+    """On the first use of codegraph, wire it into every detected AI agent
+    automatically — no prompt. Set CODEGRAPH_NO_SETUP=1 to opt out."""
     if (cmd in ("setup", "install", "install-skill", "serve", "merge-driver")
             or _SETUP_MARKER.exists()
-            or os.environ.get("CODEGRAPH_NO_SETUP")
-            or not _interactive()):
+            or os.environ.get("CODEGRAPH_NO_SETUP")):
         return
     from .installers import MENU, detected
 
     keys = [a.key for a in MENU if detected(a.key)]
     if not keys:
-        return
-    print("codegraph - first run. Detected: "
-          + ", ".join(next(a.label for a in MENU if a.key == k) for k in keys))
-    try:
-        ans = input("Wire codegraph into them now (MCP + skill/instructions)? [Y/n] ")
-    except EOFError:
-        return
-    if ans.strip().lower() in ("", "y", "yes"):
-        _run_setup(keys, "global")
-        print()
-    else:
-        try:                              # remember the "no" so it stops asking
+        try:
             _SETUP_MARKER.parent.mkdir(parents=True, exist_ok=True)
-            _SETUP_MARKER.write_text("declined\n")
+            _SETUP_MARKER.write_text("done\n")
         except OSError:
             pass
+        return
+    print("codegraph - first run. Wiring into detected agent(s): "
+          + ", ".join(next(a.label for a in MENU if a.key == k) for k in keys)
+          + "  (set CODEGRAPH_NO_SETUP=1 to disable this)")
+    _run_setup(keys, "global")
+    print()
 
 
 def _pick_agents_interactively():

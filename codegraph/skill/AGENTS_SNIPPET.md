@@ -2,7 +2,7 @@
 ## codegraph — query the code graph before grepping
 
 This project can be turned into a persistent, queryable graph with **codegraph**
-(`pip install code-graph`). When you need to understand the codebase, prefer these
+(`pip install codegraph-tool`). When you need to understand the codebase, prefer these
 over reading many files — each returns a bounded answer for a fraction of the tokens:
 
 - `codegraph query "<question>" <path>` — "how does X work" → a small subgraph with `file:line`

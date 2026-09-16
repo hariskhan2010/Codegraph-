@@ -110,7 +110,7 @@ def _index_media(db: Db, f, root: Path, whisper_model: str = "base") -> dict:
                 semantic_hash="", mtime=f.mtime, seen=time.time(), status="present",
             )
             return {"file": f.rel, "error": None, "transcribed": backend, **counts}
-        note = "no Whisper backend (pip install code-graph[media])"
+        note = "no Whisper backend (pip install codegraph-tool[media])"
     else:
         note = None
 

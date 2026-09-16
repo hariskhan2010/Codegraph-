@@ -1,5 +1,5 @@
 # PyInstaller spec — one self-contained `codegraph` executable (no Python needed).
-#   pip install pyinstaller "code-graph[langs] @ ."   # or the built wheel
+#   pip install pyinstaller "codegraph-tool[langs] @ ."   # or the built wheel
 #   pyinstaller packaging/codegraph.spec
 # Output: dist/codegraph[.exe]
 from PyInstaller.utils.hooks import collect_all, collect_submodules

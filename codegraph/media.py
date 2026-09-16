@@ -6,7 +6,7 @@ video can't be: they are transcribed here to Markdown and then flow through the
 normal document tier. Transcription is best-effort across three backends, in
 order of quality:
 
-1. ``faster-whisper``   (``pip install code-graph[media]``)
+1. ``faster-whisper``   (``pip install codegraph-tool[media]``)
 2. ``openai-whisper``   (``pip install openai-whisper``)
 3. a ``whisper`` CLI on ``PATH``
 

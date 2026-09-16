@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * postinstall for the `code-graph` npm wrapper.
+ * postinstall for the `codegraph-tool` npm wrapper.
  *
  * Strategy, best first:
  *   1. Download the standalone binary for this OS/arch from the matching
  *      GitHub Release (fully self-contained — no Python needed).
- *   2. Fall back to bootstrapping the Python package: `pipx install code-graph`,
- *      then `pip install --user code-graph`.
+ *   2. Fall back to bootstrapping the Python package: `pipx install codegraph-tool`,
+ *      then `pip install --user codegraph-tool`.
  *
  * Whichever wins is recorded in bin/.mode so bin/codegraph.js knows what to run.
  */
@@ -29,7 +29,7 @@ const MODE_PATH = path.join(BIN_DIR, ".mode");
 
 fs.mkdirSync(BIN_DIR, { recursive: true });
 
-function log(m) { process.stdout.write("[code-graph] " + m + "\n"); }
+function log(m) { process.stdout.write("[codegraph-tool] " + m + "\n"); }
 function setMode(m) { fs.writeFileSync(MODE_PATH, m + "\n"); }
 
 // ---- asset name for this platform ---------------------------------------
@@ -43,7 +43,7 @@ function assetName() {
 function download(url, dest, redirects = 0) {
   return new Promise((resolve, reject) => {
     if (redirects > 8) return reject(new Error("too many redirects"));
-    https.get(url, { headers: { "User-Agent": "code-graph-npm" } }, (res) => {
+    https.get(url, { headers: { "User-Agent": "codegraph-tool-npm" } }, (res) => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
         res.resume();
         return resolve(download(res.headers.location, dest, redirects + 1));
@@ -91,20 +91,20 @@ function which(cmd) {
 function tryPython() {
   const py = which("python3") || which("python");
   if (!py) {
-    log("Python 3.11+ not found. Install it, then run:  pip install code-graph");
+    log("Python 3.11+ not found. Install it, then run:  pip install codegraph-tool");
     setMode("missing");
     return;
   }
   const ver = spawnSync(py, ["-c", "import sys;print(sys.version_info[:2])"],
     { encoding: "utf8" }).stdout.trim();
   if (which("pipx")) {
-    log("pipx install code-graph …");
-    if (spawnSync("pipx", ["install", "--force", "code-graph"],
+    log("pipx install codegraph-tool …");
+    if (spawnSync("pipx", ["install", "--force", "codegraph-tool"],
         { stdio: "inherit" }).status === 0) { setMode("pipx"); return; }
   }
-  log(`${py} -m pip install --user code-graph …  ${ver}`);
+  log(`${py} -m pip install --user codegraph-tool …  ${ver}`);
   const r = spawnSync(py, ["-m", "pip", "install", "--user", "--upgrade",
-    "code-graph"], { stdio: "inherit" });
+    "codegraph-tool"], { stdio: "inherit" });
   setMode(r.status === 0 ? "python" : "missing");
   if (r.status === 0) {
     fs.writeFileSync(path.join(BIN_DIR, ".python"), py + "\n");

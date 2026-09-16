@@ -46,7 +46,7 @@ Full method & reproduction in [`BENCHMARK.md`](BENCHMARK.md).
 ## Quickstart
 
 ```bash
-pipx install code-graph          # command + import are `codegraph`
+pipx install codegraph-tool      # command + import are `codegraph`
 cd your/project
 codegraph extract .              # build the graph  (add a URL to clone & build)
 codegraph query "how does session auth work"
@@ -156,9 +156,9 @@ Hand-pick with `codegraph install` (interactive) or script it:
 ## Install
 
 ```bash
-pipx install code-graph          # recommended — isolated global install
-pip install code-graph
-npm install -g code-graph        # Node people — bootstraps a binary / pip
+pipx install codegraph-tool      # recommended — isolated global install
+pip install codegraph-tool
+npm install -g codegraph-tool    # Node people — bootstraps a binary / pip
 ```
 
 From a clone:
@@ -169,11 +169,12 @@ pip install -e ".[dev]"          # + tests & build tooling
 ```
 
 All 20 languages work out of the box (`tree-sitter-language-pack`). Extras:
-`code-graph[langs]` (pinned core-10 grammars), `code-graph[embeddings]` (numpy),
-`code-graph[media]` (audio/video transcription).
+`codegraph-tool[langs]` (pinned core-10 grammars), `codegraph-tool[embeddings]` (numpy),
+`codegraph-tool[media]` (audio/video transcription).
 
-> The PyPI/npm package is **`code-graph`**; the command and `import` are
-> **`codegraph`** (plain `codegraph` was already taken on both).
+> The PyPI/npm package is **`codegraph-tool`**; the command and `import` are
+> **`codegraph`** (plain `codegraph` was already taken on both, and `code-graph`
+> is blocked by PyPI as too similar to an unrelated existing package).
 
 ---
 
