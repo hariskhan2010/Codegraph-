@@ -4,6 +4,15 @@ All notable changes to codegraph. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); versions are the package
 version in `pyproject.toml`.
 
+## 0.7.1 — 2026-09-16
+
+### Changed
+- Renamed the package `code-graph` → `codegraph-tool` (the PyPI name only —
+  the import and CLI are still `codegraph`); `code-graph` was blocked as too
+  similar to an existing unrelated package.
+- Agent wiring (`codegraph setup`) now happens automatically on first run,
+  with no y/n prompt — set `CODEGRAPH_NO_SETUP=1` to opt out.
+
 ## 0.7.0 — 2026-09-08
 
 ### Added — `codegraph extract <git-url>`
